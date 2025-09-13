@@ -1,7 +1,6 @@
 import os
 from datetime import timedelta, datetime, timezone
-
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, redirect
 from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager, create_access_token, get_jwt, get_jwt_identity,
@@ -19,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-change-me")
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5174")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 PORT = int(os.getenv("PORT", "8080"))
 
 app = Flask(__name__)
@@ -79,6 +78,15 @@ ensure_password_column()
 # -------------------------
 # Routes
 # -------------------------
+@app.get("/")
+def root():
+    return redirect(f"{FRONTEND_ORIGIN}/login", code=302)
+
+@app.get("/login")
+def login_page():
+    # If you serve a frontend separately, redirect there:
+    return redirect(f"{FRONTEND_ORIGIN}/login", code=302)
+
 @app.get("/health")
 def health():
     return {"ok": True, "time": datetime.now(timezone.utc).isoformat()}

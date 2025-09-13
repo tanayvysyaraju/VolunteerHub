@@ -1,31 +1,17 @@
-import { useEffect, useState } from "react";
-import api from "../api";
+// src/pages/Events.jsx
+import React from "react";
+const API_URL = "http://localhost:8080";
 
-export default function Events(){
-  const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    api.get("/events")
-      .then(res => setEvents(res.data))
-      .catch(e => setErr(e?.message || "Failed to load"))
-      .finally(()=> setLoading(false));
-  }, []);
-
-  if (loading) return <div style={{maxWidth:800, margin:"40px auto"}}>Loading…</div>;
-  if (err) return <div style={{maxWidth:800, margin:"40px auto", color:"crimson"}}>{err}</div>;
-
+export default function Events({ user }) {
+  const logout = async () => {
+    await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    window.location.href = "/login";
+  };
   return (
-    <div style={{maxWidth:800, margin:"40px auto"}}>
+    <div style={{ padding: 24 }}>
       <h2>Events</h2>
-      <div style={{display:"grid", gap:12}}>
-        {events.map(ev => (
-          <div key={ev.id} style={{border:"1px solid #eee", padding:12, borderRadius:8}}>
-            <b>{ev.title}</b> <span style={{opacity:.7}}>{ev.city ?? "Remote"}</span>
-          </div>
-        ))}
-      </div>
+      <p>Welcome {user?.full_name || user?.email}</p>
+      <button onClick={logout}>Logout</button>
     </div>
   );
 }

@@ -1,58 +1,38 @@
-// Login.jsx
+// src/pages/Login.jsx
 import React, { useState } from "react";
-
-const API_URL = "http://localhost:8080"; // Change if your Flask backend runs elsewhere
+import { useNavigate } from "react-router-dom";
+const API_URL = "http://localhost:8080";
 
 export default function Login({ onLogin }) {
+  const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async e => {
     e.preventDefault();
     setError("");
-    try {
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: "POST",
-        credentials: "include", // Important: allows cookies to be set
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Login failed");
-      } else {
-        onLogin(data.user); // Pass user info up
-      }
-    } catch (err) {
-      setError("Network error");
-    }
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error || "Login failed");
+    onLogin?.(data.user);
+    nav("/events", { replace: true });
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ maxWidth: 400, margin: "2rem auto" }}>
+    <form onSubmit={handleSubmit} style={{ maxWidth: 420, margin: "4rem auto" }}>
       <h2>Login</h2>
-      <div>
-        <label>Email:</label>
-        <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          required
-          autoFocus
-        />
-      </div>
-      <div>
-        <label>Password:</label>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          required
-        />
-      </div>
-      {error && <div style={{ color: "red" }}>{error}</div>}
-      <button type="submit">Login</button>
+      <label>Email</label>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus />
+      <label>Password</label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+      {error && <div style={{ color: "red", marginTop: 8 }}>{error}</div>}
+      <button type="submit" style={{ marginTop: 12 }}>Login</button>
     </form>
   );
 }
