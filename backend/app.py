@@ -80,7 +80,7 @@ ensure_password_column()
 # -------------------------
 @app.get("/")
 def root():
-    return redirect(f"{FRONTEND_ORIGIN}/login", code=302)
+    return redirect(f"{FRONTEND_ORIGIN}/", code=302)
 
 @app.get("/login")
 def login_page():
