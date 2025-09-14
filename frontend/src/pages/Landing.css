@@ -123,6 +123,12 @@
   margin-bottom: 1.5rem;
 }
 
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
 .form-group input {
   width: 100%;
   padding: 0.875rem 1rem;
@@ -172,6 +178,33 @@
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+.form-footer {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+.form-footer p {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #1a202c;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: 0.5rem;
+  font-size: 0.875rem;
+  transition: color 0.2s ease;
+}
+
+.link-btn:hover {
+  color: #374151;
 }
 
 .error-message {
@@ -284,5 +317,9 @@
   
   .features-container h2 {
     font-size: 2rem;
+  }
+  
+  .form-row {
+    grid-template-columns: 1fr;
   }
 }

@@ -60,14 +60,22 @@ def ensure_password_column():
 
 def fetch_user_by_email(db, email):
     row = db.execute(text("""
-        SELECT id, email, full_name, password_hash, organization_id
+        SELECT id, email, full_name, password_hash, organization_id,
+               slack_id, user_name, company, position, dept,
+               location_city, location_state, tz,
+               raw_conversations, strengths, interests, expertise, communication_style,
+               created_at, updated_at
         FROM app_user WHERE email = :email
     """), {"email": email}).mappings().first()
     return row
 
 def fetch_user_by_id(db, user_id):
     row = db.execute(text("""
-        SELECT id, email, full_name, organization_id
+        SELECT id, email, full_name, organization_id,
+               slack_id, user_name, company, position, dept,
+               location_city, location_state, tz,
+               raw_conversations, strengths, interests, expertise, communication_style,
+               created_at, updated_at
         FROM app_user WHERE id = :id
     """), {"id": user_id}).mappings().first()
     return row
@@ -94,13 +102,42 @@ def health():
 @app.post("/auth/signup")
 def signup():
     """
-    Body: { "email": "...", "password": "...", "full_name": "Optional", "organization_id": 1 }
+    Body: { 
+        "email": "...", 
+        "password": "...", 
+        "full_name": "Optional", 
+        "organization_id": 1,
+        "user_name": "Optional",
+        "company": "Optional",
+        "position": "Optional", 
+        "dept": "Optional",
+        "location_city": "Optional",
+        "location_state": "Optional",
+        "tz": "Optional",
+        "strengths": "Optional",
+        "interests": "Optional",
+        "expertise": "Optional",
+        "communication_style": "Optional"
+    }
     """
     data = request.get_json(force=True, silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     pwd = data.get("password") or ""
     full_name = data.get("full_name")
     org_id = data.get("organization_id")
+    
+    # Additional user fields
+    user_name = data.get("user_name")
+    company = data.get("company")
+    position = data.get("position")
+    dept = data.get("dept")
+    location_city = data.get("location_city")
+    location_state = data.get("location_state")
+    tz = data.get("tz", "UTC")
+    strengths = data.get("strengths")
+    interests = data.get("interests")
+    expertise = data.get("expertise")
+    communication_style = data.get("communication_style")
 
     if not email or not pwd:
         return jsonify({"error": "email and password are required"}), 400
@@ -112,12 +149,30 @@ def signup():
         if existing:
             return jsonify({"error": "email already registered"}), 409
 
-        # Insert user
+        # Insert user with all fields
         row = db.execute(text("""
-            INSERT INTO app_user (email, full_name, organization_id, password_hash)
-            VALUES (:email, :full_name, :org_id, :pw)
-            RETURNING id, email, full_name, organization_id
-        """), {"email": email, "full_name": full_name, "org_id": org_id, "pw": pw_hash}).mappings().first()
+            INSERT INTO app_user (
+                email, full_name, organization_id, password_hash,
+                user_name, company, position, dept,
+                location_city, location_state, tz,
+                strengths, interests, expertise, communication_style
+            )
+            VALUES (
+                :email, :full_name, :org_id, :pw,
+                :user_name, :company, :position, :dept,
+                :location_city, :location_state, :tz,
+                :strengths, :interests, :expertise, :communication_style
+            )
+            RETURNING id, email, full_name, organization_id,
+                     user_name, company, position, dept,
+                     location_city, location_state, tz,
+                     strengths, interests, expertise, communication_style
+        """), {
+            "email": email, "full_name": full_name, "org_id": org_id, "pw": pw_hash,
+            "user_name": user_name, "company": company, "position": position, "dept": dept,
+            "location_city": location_city, "location_state": location_state, "tz": tz,
+            "strengths": strengths, "interests": interests, "expertise": expertise, "communication_style": communication_style
+        }).mappings().first()
         db.commit()
 
         # Issue JWT
@@ -128,6 +183,17 @@ def signup():
                 "email": row["email"],
                 "full_name": row["full_name"],
                 "organization_id": row["organization_id"],
+                "user_name": row["user_name"],
+                "company": row["company"],
+                "position": row["position"],
+                "dept": row["dept"],
+                "location_city": row["location_city"],
+                "location_state": row["location_state"],
+                "tz": row["tz"],
+                "strengths": row["strengths"],
+                "interests": row["interests"],
+                "expertise": row["expertise"],
+                "communication_style": row["communication_style"]
             }
         })
         set_access_cookies(resp, access_token)
@@ -157,6 +223,17 @@ def login():
                 "email": user["email"],
                 "full_name": user["full_name"],
                 "organization_id": user["organization_id"],
+                "user_name": user["user_name"],
+                "company": user["company"],
+                "position": user["position"],
+                "dept": user["dept"],
+                "location_city": user["location_city"],
+                "location_state": user["location_state"],
+                "tz": user["tz"],
+                "strengths": user["strengths"],
+                "interests": user["interests"],
+                "expertise": user["expertise"],
+                "communication_style": user["communication_style"]
             }
         })
         set_access_cookies(resp, access_token)
@@ -182,6 +259,17 @@ def me():
                 "email": user["email"],
                 "full_name": user["full_name"],
                 "organization_id": user["organization_id"],
+                "user_name": user["user_name"],
+                "company": user["company"],
+                "position": user["position"],
+                "dept": user["dept"],
+                "location_city": user["location_city"],
+                "location_state": user["location_state"],
+                "tz": user["tz"],
+                "strengths": user["strengths"],
+                "interests": user["interests"],
+                "expertise": user["expertise"],
+                "communication_style": user["communication_style"]
             }
         }, 200
 

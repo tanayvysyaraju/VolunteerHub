@@ -1,41 +1,58 @@
--- Enable UUID support
+-- ===== Extensions =====
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
--- --------------------------
--- Types
--- --------------------------
-CREATE TYPE event_mode AS ENUM ('in_person','virtual','hybrid');
+-- ===== Types =====
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_mode') THEN
+    CREATE TYPE event_mode AS ENUM ('in_person','virtual','hybrid');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'task_status') THEN
+    CREATE TYPE task_status AS ENUM ('open','claimed','in_progress','done','cancelled');
+  END IF;
+END$$;
 
--- --------------------------
--- Organization
--- --------------------------
+-- ===== Org =====
 CREATE TABLE IF NOT EXISTS organization (
-  id            SERIAL PRIMARY KEY,
-  name          TEXT NOT NULL,
-  website       TEXT
+  id        SERIAL PRIMARY KEY,
+  name      TEXT NOT NULL,
+  website   TEXT
 );
 
--- --------------------------
--- Users
--- --------------------------
+-- ===== Users (UUID id, merged fields) =====
 CREATE TABLE IF NOT EXISTS app_user (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email          TEXT UNIQUE NOT NULL,
-  full_name      TEXT,
-  organization_id INT REFERENCES organization(id) ON DELETE SET NULL,
-  password_hash  TEXT,
-  slack_id       TEXT,
-  dept           TEXT,
-  location_city  TEXT,
-  location_state TEXT,
-  tz             TEXT DEFAULT 'UTC',
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email            TEXT UNIQUE NOT NULL,
+  full_name        TEXT,
+  organization_id  INT REFERENCES organization(id) ON DELETE SET NULL,
+  password_hash    TEXT,
+
+  -- Slack / profile fields
+  slack_id         TEXT,
+  user_name        TEXT,
+  company          TEXT,
+  position         TEXT,
+  dept             TEXT,
+  location_city    TEXT,
+  location_state   TEXT,
+  tz               TEXT DEFAULT 'UTC',
+
+  -- Free-form profiling data
+  raw_conversations   TEXT,
+  strengths           TEXT,
+  interests           TEXT,
+  expertise           TEXT,
+  communication_style TEXT,
+
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- --------------------------
--- Events
--- --------------------------
+CREATE INDEX IF NOT EXISTS idx_app_user_org ON app_user(organization_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_email ON app_user(email);
+
+-- ===== Events =====
 CREATE TABLE IF NOT EXISTS event (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id  INT REFERENCES organization(id) ON DELETE SET NULL,
@@ -58,9 +75,11 @@ CREATE TABLE IF NOT EXISTS event (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- --------------------------
--- Event Sessions
--- --------------------------
+CREATE INDEX IF NOT EXISTS idx_event_causes_gin  ON event USING GIN (causes);
+CREATE INDEX IF NOT EXISTS idx_event_skills_gin  ON event USING GIN (skills_needed);
+CREATE INDEX IF NOT EXISTS idx_event_tags_gin    ON event USING GIN (tags);
+
+-- Event sessions (time slots per event)
 CREATE TABLE IF NOT EXISTS event_session (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id     UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
@@ -70,37 +89,70 @@ CREATE TABLE IF NOT EXISTS event_session (
   meet_url     TEXT,
   address_line TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_session_time ON event_session (start_ts, end_ts);
 
--- --------------------------
--- Matching Table (users ↔ events)
--- --------------------------
+-- User↔Event match (recommendation scores)
 CREATE TABLE IF NOT EXISTS user_event_match (
-  user_id   UUID NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  event_id  UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
-  score     DOUBLE PRECISION NOT NULL,
-  reasons   TEXT[] DEFAULT '{}',
+  user_id     UUID NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  event_id    UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  score       DOUBLE PRECISION NOT NULL,
+  reasons     TEXT[] DEFAULT '{}',
   computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, event_id)
 );
 
--- --------------------------
--- Indexes
--- --------------------------
-CREATE INDEX IF NOT EXISTS idx_event_causes_gin     ON event USING GIN (causes);
-CREATE INDEX IF NOT EXISTS idx_event_skills_gin     ON event USING GIN (skills_needed);
-CREATE INDEX IF NOT EXISTS idx_event_tags_gin       ON event USING GIN (tags);
-CREATE INDEX IF NOT EXISTS idx_session_time         ON event_session (start_ts, end_ts);
-CREATE INDEX IF NOT EXISTS idx_app_user_org         ON app_user(organization_id);
+-- ===== Micro-Tasks (from new schema, with indices) =====
+CREATE TABLE IF NOT EXISTS task (
+  id           BIGSERIAL PRIMARY KEY,
 
--- --------------------------
--- Triggers
--- --------------------------
+  task         TEXT NOT NULL,
+  task_slug    TEXT GENERATED ALWAYS AS (regexp_replace(lower(trim(task)), '\s+', '-', 'g')) STORED,
+
+  start_ts     TIMESTAMPTZ NOT NULL,
+  end_ts       TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_task_time_order CHECK (end_ts > start_ts),
+
+  -- up to 3 skills + array for querying
+  skill1       TEXT,
+  skill2       TEXT,
+  skill3       TEXT,
+  skills_array TEXT[] GENERATED ALWAYS AS (ARRAY_REMOVE(ARRAY[skill1, skill2, skill3], NULL)) STORED,
+
+  active       BOOLEAN NOT NULL DEFAULT TRUE,
+  status       task_status NOT NULL DEFAULT 'open',
+
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_slug_unique ON task(task_slug);
+CREATE INDEX IF NOT EXISTS idx_task_time    ON task(start_ts, end_ts);
+CREATE INDEX IF NOT EXISTS idx_task_active  ON task(active);
+CREATE INDEX IF NOT EXISTS idx_task_status  ON task(status);
+CREATE INDEX IF NOT EXISTS idx_task_trgm    ON task USING GIN (task gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_task_skills  ON task USING GIN (skills_array);
+
+-- ===== Communities (users groupings) =====
+CREATE TABLE IF NOT EXISTS community (
+  id     SERIAL PRIMARY KEY,
+  name   VARCHAR(100) UNIQUE NOT NULL,
+  skill1 VARCHAR(100) NOT NULL,
+  skill2 VARCHAR(100) NOT NULL,
+  skill3 VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_community (
+  user_id      UUID NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  community_id INT  NOT NULL REFERENCES community(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, community_id)
+);
+
+-- ===== Triggers: updated_at maintenance =====
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN
-  NEW.updated_at = now();
+  NEW.updated_at := now();
   RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+END; $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_event_updated_at ON event;
 CREATE TRIGGER trg_event_updated_at BEFORE UPDATE ON event
@@ -108,4 +160,8 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_app_user_updated_at ON app_user;
 CREATE TRIGGER trg_app_user_updated_at BEFORE UPDATE ON app_user
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_task_updated_at ON task;
+CREATE TRIGGER trg_task_updated_at BEFORE UPDATE ON task
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();

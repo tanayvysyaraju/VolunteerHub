@@ -10,7 +10,18 @@ export default function Landing() {
     email: "",
     password: "",
     fullName: "",
-    organizationId: 1
+    organizationId: null,
+    userName: "",
+    company: "",
+    position: "",
+    dept: "",
+    locationCity: "",
+    locationState: "",
+    tz: "UTC",
+    strengths: "",
+    interests: "",
+    expertise: "",
+    communicationStyle: ""
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -31,7 +42,30 @@ export default function Landing() {
 
     try {
       const endpoint = isSignUp ? "/auth/signup" : "/auth/login";
-      const body = isSignUp ? formData : { email: formData.email, password: formData.password };
+      let body;
+      
+      if (isSignUp) {
+        // Map frontend field names to backend field names
+        body = {
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.fullName,
+          organization_id: formData.organizationId,
+          user_name: formData.userName,
+          company: formData.company,
+          position: formData.position,
+          dept: formData.dept,
+          location_city: formData.locationCity,
+          location_state: formData.locationState,
+          tz: formData.tz,
+          strengths: formData.strengths,
+          interests: formData.interests,
+          expertise: formData.expertise,
+          communication_style: formData.communicationStyle
+        };
+      } else {
+        body = { email: formData.email, password: formData.password };
+      }
       
       const res = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
@@ -43,7 +77,18 @@ export default function Landing() {
       const data = await res.json().catch(() => ({}));
       
       if (!res.ok) {
-        setError(data.error || `${isSignUp ? 'Signup' : 'Login'} failed`);
+        const errorMessage = data.error || `${isSignUp ? 'Signup' : 'Login'} failed`;
+        
+        // Handle specific redirect cases
+        if (errorMessage.includes("email already registered")) {
+          setError("Account already exists. Please log in instead.");
+          setTimeout(() => setIsSignUp(false), 2000);
+        } else if (errorMessage.includes("invalid credentials")) {
+          setError("Account not found. Please sign up first.");
+          setTimeout(() => setIsSignUp(true), 2000);
+        } else {
+          setError(errorMessage);
+        }
         return;
       }
       
@@ -98,16 +143,119 @@ export default function Landing() {
               <h3>{isSignUp ? 'Create Account' : 'Welcome Back'}</h3>
               
               {isSignUp && (
-                <div className="form-group">
-                  <input
-                    type="text"
-                    name="fullName"
-                    placeholder="Full Name"
-                    value={formData.fullName}
-                    onChange={handleInputChange}
-                    required
-                  />
-                </div>
+                <>
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="fullName"
+                      placeholder="Full Name"
+                      value={formData.fullName}
+                      onChange={handleInputChange}
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="userName"
+                      placeholder="Username"
+                      value={formData.userName}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="company"
+                      placeholder="Company"
+                      value={formData.company}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="position"
+                      placeholder="Position/Title"
+                      value={formData.position}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="dept"
+                      placeholder="Department"
+                      value={formData.dept}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-row">
+                    <div className="form-group">
+                      <input
+                        type="text"
+                        name="locationCity"
+                        placeholder="City"
+                        value={formData.locationCity}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <input
+                        type="text"
+                        name="locationState"
+                        placeholder="State"
+                        value={formData.locationState}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="strengths"
+                      placeholder="Strengths (comma-separated)"
+                      value={formData.strengths}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="interests"
+                      placeholder="Interests (comma-separated)"
+                      value={formData.interests}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="expertise"
+                      placeholder="Areas of Expertise (comma-separated)"
+                      value={formData.expertise}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      name="communicationStyle"
+                      placeholder="Communication Style"
+                      value={formData.communicationStyle}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                </>
               )}
               
               <div className="form-group">
@@ -141,6 +289,39 @@ export default function Landing() {
               >
                 {isLoading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}
               </button>
+              
+              <div className="form-footer">
+                <p>
+                  {isSignUp ? "Already have an account?" : "Don't have an account?"}
+                  <button 
+                    type="button"
+                    className="link-btn"
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setError("");
+                      setFormData({
+                        email: "",
+                        password: "",
+                        fullName: "",
+                        organizationId: null,
+                        userName: "",
+                        company: "",
+                        position: "",
+                        dept: "",
+                        locationCity: "",
+                        locationState: "",
+                        tz: "UTC",
+                        strengths: "",
+                        interests: "",
+                        expertise: "",
+                        communicationStyle: ""
+                      });
+                    }}
+                  >
+                    {isSignUp ? "Sign In" : "Sign Up"}
+                  </button>
+                </p>
+              </div>
             </form>
           </div>
         </div>
