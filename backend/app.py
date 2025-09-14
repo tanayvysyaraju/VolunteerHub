@@ -2365,5 +2365,40 @@ def delete_unregistered_users():
             "deleted_count": deleted_count
         }), 200
 
+@app.post("/api/admin/update_task_skills")
+@jwt_required()
+def update_task_skills():
+    """Update skills for a specific task."""
+    data = request.get_json(silent=True) or {}
+    task_id = data.get("task_id")
+    skills = data.get("skills", [])
+    
+    if not task_id:
+        return jsonify({"error": "task_id is required"}), 400
+    
+    if not isinstance(skills, list) or len(skills) == 0:
+        return jsonify({"error": "skills array is required"}), 400
+    
+    with SessionLocal() as db:
+        # Check if task exists
+        task = db.execute(text("SELECT id FROM event_task WHERE id = :id"), {"id": task_id}).first()
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        # Update the task skills
+        db.execute(text("""
+            UPDATE event_task 
+            SET skills_required = :skills, updated_at = now()
+            WHERE id = :id
+        """), {"id": task_id, "skills": skills})
+        
+        db.commit()
+        
+        return jsonify({
+            "message": f"Updated skills for task {task_id}",
+            "task_id": task_id,
+            "skills": skills
+        }), 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)
