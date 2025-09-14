@@ -121,6 +121,7 @@ export default function Landing() {
       <nav className="navbar">
         <div className="nav-container">
           <div className="nav-logo">
+            <div className="logo-icon">🤝</div>
             <h2>VolunteerHub</h2>
           </div>
           <div className="nav-buttons">
@@ -128,13 +129,15 @@ export default function Landing() {
               className={`nav-btn ${!isSignUp ? 'active' : ''}`}
               onClick={() => setIsSignUp(false)}
             >
-              Login
+              <span className="nav-icon">↪</span>
+              <span>Sign In</span>
             </button>
             <button 
               className={`nav-btn ${isSignUp ? 'active' : ''}`}
               onClick={() => setIsSignUp(true)}
             >
-              Sign Up
+              <span className="nav-icon">+</span>
+              <span>Sign Up</span>
             </button>
           </div>
         </div>
@@ -143,105 +146,136 @@ export default function Landing() {
       {/* Hero Section */}
       <div className="hero-section">
         <div className="hero-content">
-          <h1 className="hero-title">
-            Connect. Volunteer. Impact.
-          </h1>
-          <p className="hero-subtitle">
-            Join a community of volunteers making a difference. 
-            Discover opportunities that matter to you and create lasting change.
-          </p>
+          <div className="hero-text">
+            <h1 className="hero-title">
+              Connect. Volunteer. <span className="highlight">Impact.</span>
+            </h1>
+            <p className="hero-subtitle">
+              Join a community of volunteers making a difference. 
+              Discover opportunities that matter to you and create lasting change.
+            </p>
+            <div className="hero-stats">
+              <div className="stat">
+                <div className="stat-number">500+</div>
+                <div className="stat-label">Active Volunteers</div>
+              </div>
+              <div className="stat">
+                <div className="stat-number">1,200+</div>
+                <div className="stat-label">Hours Contributed</div>
+              </div>
+              <div className="stat">
+                <div className="stat-number">50+</div>
+                <div className="stat-label">Communities Served</div>
+              </div>
+            </div>
+          </div>
           
           {/* Auth Form */}
           <div className="auth-form-container">
-            <form onSubmit={handleSubmit} className="auth-form">
+            <div className="form-header">
               <h3>{isSignUp ? 'Create Account' : 'Welcome Back'}</h3>
+              <p className="form-subtitle">
+                {isSignUp ? 'Join our community today' : 'Sign in to continue your journey'}
+              </p>
+            </div>
+            
+            <form onSubmit={handleSubmit} className="auth-form">
               
               {isSignUp && (
                 <>
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="fullName"
-                      placeholder="Full Name"
-                      value={formData.fullName}
-                      onChange={handleInputChange}
-                      required
-                    />
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Full Name</label>
+                      <input
+                        type="text"
+                        name="fullName"
+                        placeholder="Enter your full name"
+                        value={formData.fullName}
+                        onChange={handleInputChange}
+                        required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Position</label>
+                      <input
+                        type="text"
+                        name="position"
+                        placeholder="Your job title"
+                        value={formData.position}
+                        onChange={handleInputChange}
+                      />
+                    </div>
                   </div>
 
-                  <div className="form-group inline-checkbox">
-                    <input
-                      id="slack-scan"
-                      type="checkbox"
-                      checked={wantsSlackScan}
-                      onChange={(e) => setWantsSlackScan(e.target.checked)}
-                    />
-                    <label htmlFor="slack-scan">Analyze recent Slack chats to suggest top 3 skills</label>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Department</label>
+                      <select
+                        name="dept"
+                        value={formData.dept}
+                        onChange={handleInputChange}
+                        required
+                      >
+                        <option value="">Select Department</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Employee Resource Group</label>
+                      <select
+                        name="erg"
+                        value={formData.erg}
+                        onChange={handleInputChange}
+                      >
+                        <option value="">Select ERG (Optional)</option>
+                        <option value="Women in Leadership / Women@">Women in Leadership / Women@</option>
+                        <option value="Black Employee Network / Black Professionals ERG">Black Employee Network / Black Professionals ERG</option>
+                        <option value="Latinx / Hispanic Heritage Network">Latinx / Hispanic Heritage Network</option>
+                        <option value="Asian Pacific Islander Network">Asian Pacific Islander Network</option>
+                        <option value="South Asian Professionals Network">South Asian Professionals Network</option>
+                        <option value="LGBTQ+ Pride Network">LGBTQ+ Pride Network</option>
+                        <option value="Veterans & Military Families Network">Veterans & Military Families Network</option>
+                        <option value="Disability & Neurodiversity Alliance">Disability & Neurodiversity Alliance</option>
+                        <option value="Parents & Caregivers ERG">Parents & Caregivers ERG</option>
+                        <option value="Young Professionals / NextGen ERG">Young Professionals / NextGen ERG</option>
+                        <option value="Multifaith / Interfaith Network">Multifaith / Interfaith Network</option>
+                        <option value="Mental Health & Wellness Network">Mental Health & Wellness Network</option>
+                        <option value="Environmental & Sustainability Group (Green Team)">Environmental & Sustainability Group (Green Team)</option>
+                        <option value="International Employees Network / Global Cultures ERG">International Employees Network / Global Cultures ERG</option>
+                        <option value="Native & Indigenous Peoples Network">Native & Indigenous Peoples Network</option>
+                        <option value="African Diaspora Network">African Diaspora Network</option>
+                        <option value="Middle Eastern & North African (MENA) ERG">Middle Eastern & North African (MENA) ERG</option>
+                        <option value="Men as Allies / Gender Equity Advocates">Men as Allies / Gender Equity Advocates</option>
+                        <option value="Volunteers & Community Impact Network">Volunteers & Community Impact Network</option>
+                        <option value="Multicultural / Diversity & Inclusion Council">Multicultural / Diversity & Inclusion Council</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="position"
-                      placeholder="Position/Title"
-                      value={formData.position}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <select
-                      name="dept"
-                      value={formData.dept}
-                      onChange={handleInputChange}
-                      required
-                    >
-                      <option value="">Select Department</option>
-                      {departments.map((d) => (
-                        <option key={d.id} value={d.name}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <select
-                      name="erg"
-                      value={formData.erg}
-                      onChange={handleInputChange}
-                    >
-                      <option value="">Select Employee Resource Group (Optional)</option>
-                      <option value="Women in Leadership / Women@">Women in Leadership / Women@</option>
-                      <option value="Black Employee Network / Black Professionals ERG">Black Employee Network / Black Professionals ERG</option>
-                      <option value="Latinx / Hispanic Heritage Network">Latinx / Hispanic Heritage Network</option>
-                      <option value="Asian Pacific Islander Network">Asian Pacific Islander Network</option>
-                      <option value="South Asian Professionals Network">South Asian Professionals Network</option>
-                      <option value="LGBTQ+ Pride Network">LGBTQ+ Pride Network</option>
-                      <option value="Veterans & Military Families Network">Veterans & Military Families Network</option>
-                      <option value="Disability & Neurodiversity Alliance">Disability & Neurodiversity Alliance</option>
-                      <option value="Parents & Caregivers ERG">Parents & Caregivers ERG</option>
-                      <option value="Young Professionals / NextGen ERG">Young Professionals / NextGen ERG</option>
-                      <option value="Multifaith / Interfaith Network">Multifaith / Interfaith Network</option>
-                      <option value="Mental Health & Wellness Network">Mental Health & Wellness Network</option>
-                      <option value="Environmental & Sustainability Group (Green Team)">Environmental & Sustainability Group (Green Team)</option>
-                      <option value="International Employees Network / Global Cultures ERG">International Employees Network / Global Cultures ERG</option>
-                      <option value="Native & Indigenous Peoples Network">Native & Indigenous Peoples Network</option>
-                      <option value="African Diaspora Network">African Diaspora Network</option>
-                      <option value="Middle Eastern & North African (MENA) ERG">Middle Eastern & North African (MENA) ERG</option>
-                      <option value="Men as Allies / Gender Equity Advocates">Men as Allies / Gender Equity Advocates</option>
-                      <option value="Volunteers & Community Impact Network">Volunteers & Community Impact Network</option>
-                      <option value="Multicultural / Diversity & Inclusion Council">Multicultural / Diversity & Inclusion Council</option>
-                    </select>
+                  <div className="form-group checkbox-group">
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={wantsSlackScan}
+                        onChange={(e) => setWantsSlackScan(e.target.checked)}
+                      />
+                      <span className="checkbox-custom"></span>
+                      <span className="checkbox-text">Analyze recent Slack chats to suggest top 3 skills</span>
+                    </label>
                   </div>
                 </>
               )}
               
               <div className="form-group">
+                <label className="form-label">Email Address</label>
                 <input
                   type="email"
                   name="email"
-                  placeholder="Email Address"
+                  placeholder="Enter your email"
                   value={formData.email}
                   onChange={handleInputChange}
                   required
@@ -249,10 +283,11 @@ export default function Landing() {
               </div>
               
               <div className="form-group">
+                <label className="form-label">Password</label>
                 <input
                   type="password"
                   name="password"
-                  placeholder="Password"
+                  placeholder="Enter your password"
                   value={formData.password}
                   onChange={handleInputChange}
                   required
@@ -266,7 +301,10 @@ export default function Landing() {
                 className="submit-btn"
                 disabled={isLoading}
               >
-                {isLoading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}
+                <span className="btn-icon">
+                  {isLoading ? '⏳' : (isSignUp ? '+' : '↪')}
+                </span>
+                <span>{isLoading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}</span>
               </button>
               
               <div className="form-footer">

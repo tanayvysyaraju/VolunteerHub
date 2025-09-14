@@ -4,7 +4,8 @@ import "./Home.css";
 
 const API_URL = "http://localhost:8080";
 
-export default function Home({ user }) {
+export default function Home({ user: propUser }) {
+  const [user, setUser] = useState(propUser);
   const [recommendedTasks, setRecommendedTasks] = useState([]);
   const [trendingEvents, setTrendingEvents] = useState([]);
   const [registeredTasks, setRegisteredTasks] = useState([]);
@@ -15,6 +16,23 @@ export default function Home({ user }) {
   const [trendSlide, setTrendSlide] = useState(0);
   const [regSlide, setRegSlide] = useState(0);
   const regCount = registeredTasks.length;
+
+  // Debug: Log user data
+  console.log("Home component - user data:", user);
+
+  useEffect(() => {
+    // If no user prop, fetch user data directly
+    if (!user) {
+      fetch(`${API_URL}/auth/me`, { credentials: "include" })
+        .then(async r => {
+          if (r.ok) {
+            const data = await r.json();
+            setUser(data.user);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [propUser]);
 
   useEffect(() => {
     fetchHomeData();
@@ -66,21 +84,44 @@ export default function Home({ user }) {
     );
   }
 
+  const handleSignOut = async () => {
+    try {
+      await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (_) {}
+    window.location.href = '/';
+  };
+
   return (
     <div className="home-page">
+      {/* Top Navigation */}
+      <div className="top-nav">
+        <div className="nav-left">
+          <a href="/home" className="nav-btn home-btn">
+            <span className="nav-icon">⌂</span>
+            <span>Home</span>
+          </a>
+          <button onClick={handleSignOut} className="nav-btn signout-btn">
+            <span className="nav-icon">↪</span>
+            <span>Sign Out</span>
+          </button>
+        </div>
+        <div className="nav-right">
+          <a href="/analytics" className="nav-btn analytics-btn">
+            <span className="nav-icon">📊</span>
+            <span>Analytics</span>
+          </a>
+          <a href="/create-event" className="nav-btn create-btn">
+            <span className="nav-icon">+</span>
+            <span>Create Event</span>
+          </a>
+        </div>
+      </div>
+
       {/* Header */}
       <header className="home-header">
         <div className="header-content">
-          <h1>Welcome back, {user?.full_name || "Volunteer"}!</h1>
+          <h1>Welcome back, {user?.full_name || "Loading..."}!</h1>
           <p>Ready to make a difference in your community?</p>
-          <div className="header-actions">
-            <a href="/analytics" className="analytics-link">
-              📊 View Company Analytics
-            </a>
-            <a href="/create-event" className="create-event-link">
-              ➕ Create Event
-            </a>
-          </div>
         </div>
       </header>
 
@@ -371,6 +412,7 @@ export default function Home({ user }) {
                   <div key={index} className="community-item">
                     <div className="community-name">{community.name}</div>
                     <div className="community-rank">Rank #{community.rank}</div>
+                    <div className="community-cta">Register for 3 more events to rank up!</div>
                   </div>
                 ))
               ) : (

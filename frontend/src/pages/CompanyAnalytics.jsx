@@ -7,12 +7,18 @@ const API_URL = "http://localhost:8080";
 export default function CompanyAnalytics({ user }) {
   const [overview, setOverview] = useState(null);
   const [engagement, setEngagement] = useState(null);
-  const [impact, setImpact] = useState(null);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState(null);
   const [trends, setTrends] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
+
+  const handleSignOut = async () => {
+    try {
+      await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (_) {}
+    window.location.href = '/';
+  };
 
   useEffect(() => {
     fetchCompanyData();
@@ -20,19 +26,17 @@ export default function CompanyAnalytics({ user }) {
 
   const fetchCompanyData = async () => {
     try {
-      const [overviewRes, engagementRes, impactRes, progressRes, leaderboardRes, trendsRes] = await Promise.all([
+      const [overviewRes, engagementRes, progressRes, leaderboardRes, trendsRes] = await Promise.all([
         fetch(`${API_URL}/api/company/overview`, { credentials: "include" }),
         fetch(`${API_URL}/api/company/engagement`, { credentials: "include" }),
-        fetch(`${API_URL}/api/company/impact`, { credentials: "include" }),
         fetch(`${API_URL}/api/company/progress`, { credentials: "include" }),
         fetch(`${API_URL}/api/company/leaderboard`, { credentials: "include" }),
         fetch(`${API_URL}/api/company/trends`, { credentials: "include" })
       ]);
 
-      const [overviewData, engagementData, impactData, progressData, leaderboardData, trendsData] = await Promise.all([
+      const [overviewData, engagementData, progressData, leaderboardData, trendsData] = await Promise.all([
         overviewRes.json(),
         engagementRes.json(),
-        impactRes.json(),
         progressRes.json(),
         leaderboardRes.json(),
         trendsRes.json()
@@ -40,7 +44,6 @@ export default function CompanyAnalytics({ user }) {
 
       setOverview(overviewData);
       setEngagement(engagementData);
-      setImpact(impactData);
       setProgress(progressData);
       setLeaderboard(leaderboardData);
       setTrends(trendsData);
@@ -54,10 +57,8 @@ export default function CompanyAnalytics({ user }) {
   const tabs = [
     { id: "overview", label: "Overview", icon: "📊" },
     { id: "engagement", label: "Engagement", icon: "👥" },
-    { id: "impact", label: "Impact", icon: "🌍" },
     { id: "progress", label: "Progress", icon: "📈" },
-    { id: "leaderboard", label: "Leaderboard", icon: "🏆" },
-    { id: "trends", label: "Trends", icon: "📉" }
+    { id: "leaderboard", label: "Leaderboard", icon: "🏆" }
   ];
 
   if (loading) {
@@ -71,6 +72,30 @@ export default function CompanyAnalytics({ user }) {
 
   return (
     <div className="company-analytics">
+      {/* Top Navigation */}
+      <div className="top-nav">
+        <div className="nav-left">
+          <a href="/home" className="nav-btn home-btn">
+            <span className="nav-icon">⌂</span>
+            <span>Home</span>
+          </a>
+          <button onClick={handleSignOut} className="nav-btn signout-btn">
+            <span className="nav-icon">↪</span>
+            <span>Sign Out</span>
+          </button>
+        </div>
+        <div className="nav-right">
+          <a href="/analytics" className="nav-btn analytics-btn active">
+            <span className="nav-icon">📊</span>
+            <span>Analytics</span>
+          </a>
+          <a href="/create-event" className="nav-btn create-btn">
+            <span className="nav-icon">+</span>
+            <span>Create Event</span>
+          </a>
+        </div>
+      </div>
+
       {/* Header */}
       <header className="analytics-header">
         <div className="header-content">
@@ -97,19 +122,17 @@ export default function CompanyAnalytics({ user }) {
 
       {/* Tab Content */}
       <div className="analytics-content">
-        {activeTab === "overview" && <OverviewTab data={overview} />}
+        {activeTab === "overview" && <OverviewTab data={overview} trends={trends} />}
         {activeTab === "engagement" && <EngagementTab data={engagement} />}
-        {activeTab === "impact" && <ImpactTab data={impact} />}
         {activeTab === "progress" && <ProgressTab data={progress} />}
         {activeTab === "leaderboard" && <LeaderboardTab data={leaderboard} />}
-        {activeTab === "trends" && <TrendsTab data={trends} />}
       </div>
     </div>
   );
 }
 
 // Overview Tab Component
-function OverviewTab({ data }) {
+function OverviewTab({ data, trends }) {
   return (
     <div className="tab-content">
       <div className="metrics-grid">
@@ -148,30 +171,26 @@ function OverviewTab({ data }) {
 
       <div className="charts-grid">
         <div className="chart-card">
-          <h3>Monthly Trends</h3>
-          <div className="trend-chart">
-            <div className="trend-item">
-              <span>Current Month</span>
-              <span className="trend-value">{data?.monthly_trends?.current_month || 0}</span>
-            </div>
-            <div className="trend-item">
-              <span>Previous Month</span>
-              <span className="trend-value">{data?.monthly_trends?.previous_month || 0}</span>
-            </div>
-            <div className="trend-item">
-              <span>Growth</span>
-              <span className={`trend-value ${(data?.monthly_trends?.growth_percentage || 0) >= 0 ? 'positive' : 'negative'}`}>
-                {data?.monthly_trends?.growth_percentage || 0}%
-              </span>
+          <h3>Participation Trends</h3>
+          <div className="trends-chart">
+            <div className="trend-metric">
+              <span>Daily Average (30d)</span>
+              <span className="trend-value">{trends?.participation_trends?.daily_average || 0}</span>
             </div>
           </div>
         </div>
 
         <div className="chart-card">
-          <h3>Top Departments</h3>
-          <div className="empty-state">
-            <div className="empty-icon">🏢</div>
-            <p>No department data available yet</p>
+          <h3>Predictive Insights</h3>
+          <div className="insights">
+            <div className="insight-item">
+              <span>Projected Hours (month)</span>
+              <span>{trends?.predictive_insights?.projected_hours || 0}</span>
+            </div>
+            <div className="insight-item">
+              <span>Engagement Forecast</span>
+              <span className="forecast">{trends?.predictive_insights?.engagement_forecast || 'stable'}</span>
+            </div>
           </div>
         </div>
       </div>

@@ -1402,6 +1402,7 @@ def get_communities():
             GROUP BY e.id, e.name
         """)).mappings().all()
 
+    # Build combined list for overall leaderboard
     combined = []
     for r in dept_rows:
         combined.append({
@@ -1418,7 +1419,7 @@ def get_communities():
             "score": int(r["score"] or 0),
         })
 
-    # Rank by score desc (dense ranking)
+    # Overall dense ranking across both categories
     combined.sort(key=lambda x: (-x["score"], x["name"]))
     last_score = None
     rank = 0
@@ -1428,19 +1429,44 @@ def get_communities():
             last_score = item["score"]
         item["rank"] = rank
 
+    # Category-specific dense ranking maps
+    def build_rank_map(rows, name_key):
+        arr = [{"id": r["id"], "name": r[name_key], "score": int(r["score"] or 0)} for r in rows]
+        arr.sort(key=lambda x: (-x["score"], x["name"]))
+        mp = {}
+        last = None
+        rk = 0
+        for i, it in enumerate(arr):
+            if it["score"] != last:
+                rk = i + 1
+                last = it["score"]
+            mp[it["id"]] = rk
+        return mp
+
+    dept_rank_map = build_rank_map(dept_rows, "name")
+    erg_rank_map = build_rank_map(erg_rows, "name")
+
     # User communities with ranks
     user_communities = []
     if me:
         if me.get("department_id") is not None:
-            for c in combined:
-                if c["kind"] == "department" and c["id"] == me["department_id"]:
-                    user_communities.append({"name": c["name"], "rank": c["rank"]})
-                    break
+            # Use category rank for department
+            dep_id = me["department_id"]
+            dep_name_row = next((r for r in dept_rows if r["id"] == dep_id), None)
+            if dep_name_row:
+                user_communities.append({
+                    "name": f"Dept: {dep_name_row['name']}",
+                    "rank": dept_rank_map.get(dep_id, None)
+                })
         if me.get("erg_id") is not None:
-            for c in combined:
-                if c["kind"] == "erg" and c["id"] == me["erg_id"]:
-                    user_communities.append({"name": c["name"], "rank": c["rank"]})
-                    break
+            # Use category rank for ERG
+            erg_id_val = me["erg_id"]
+            erg_name_row = next((r for r in erg_rows if r["id"] == erg_id_val), None)
+            if erg_name_row:
+                user_communities.append({
+                    "name": f"ERG: {erg_name_row['name']}",
+                    "rank": erg_rank_map.get(erg_id_val, None)
+                })
 
     # Only show top 10 entries on the user view
     combined_top = combined[:10]
@@ -1720,6 +1746,184 @@ def seed_leaderboard():
         )).mappings().all()
 
     return jsonify({"seeded_departments": len(depts), "seeded_ergs": len(ergs), "top10": [{"name": r["name"], "score": int(r["score"] or 0)} for r in rows]}), 200
+
+
+# -------------------------
+# Admin: Bulk register users for random tasks (simulate signups)
+# -------------------------
+@app.post("/api/admin/bulk_register")
+@jwt_required()
+def bulk_register_users_for_tasks():
+    """Body: { emails: string[], min_tasks?: int, max_tasks?: int }
+    For each email, register the user to 3-4 random open tasks (no duplicates).
+    """
+    payload = request.get_json(silent=True) or {}
+    emails = payload.get("emails") or []
+    if not isinstance(emails, list) or not emails:
+        return jsonify({"error": "emails array required"}), 400
+    min_tasks = int(payload.get("min_tasks", 3))
+    max_tasks = int(payload.get("max_tasks", 4))
+    if min_tasks < 1: min_tasks = 1
+    if max_tasks < min_tasks: max_tasks = min_tasks
+
+    with SessionLocal() as db:
+        # Fetch open tasks once
+        open_tasks = db.execute(text(
+            "SELECT id FROM event_task WHERE status='open'"
+        )).scalars().all()
+        if not open_tasks:
+            return jsonify({"error": "no open tasks"}), 400
+
+        done = {}
+        for email in emails:
+            user = db.execute(text("SELECT id FROM app_user WHERE email=:e"), {"e": email}).mappings().first()
+            if not user:
+                done[email] = 0
+                continue
+            k = random.randint(min_tasks, max_tasks)
+            chosen = random.sample(open_tasks, k if k <= len(open_tasks) else len(open_tasks))
+            cnt = 0
+            for tid in chosen:
+                try:
+                    db.execute(text(
+                        "INSERT INTO user_task_registration (user_id, task_id) VALUES (:uid, :tid) ON CONFLICT DO NOTHING"
+                    ), {"uid": user["id"], "tid": tid})
+                    db.execute(text(
+                        "UPDATE event_task SET registered_count = COALESCE(registered_count,0) + 1, updated_at=now() WHERE id=:tid"
+                    ), {"tid": tid})
+                    cnt += 1
+                except Exception:
+                    pass
+            done[email] = cnt
+        db.commit()
+    return jsonify({"registered": done}), 200
+
+
+# -------------------------
+# Admin: Assign random communities and append their skills to user profiles
+# -------------------------
+@app.post("/api/admin/assign_random_communities")
+@jwt_required()
+def assign_random_communities():
+    """Body: { emails: string[], min?: int, max?: int }
+    Assign 1-2 random communities per user and append their skills to app_user.skills (deduped).
+    """
+    payload = request.get_json(silent=True) or {}
+    emails = payload.get("emails") or []
+    if not isinstance(emails, list) or not emails:
+        return jsonify({"error": "emails array required"}), 400
+    min_n = int(payload.get("min", 1))
+    max_n = int(payload.get("max", 2))
+    if min_n < 1: min_n = 1
+    if max_n < min_n: max_n = min_n
+
+    with SessionLocal() as db:
+        comms = db.execute(text("SELECT id, skill1, skill2, skill3 FROM community" )).mappings().all()
+        if not comms:
+            return jsonify({"error": "no communities found"}), 400
+        by_email = {}
+        for email in emails:
+            u = db.execute(text("SELECT id, skills FROM app_user WHERE email=:e"), {"e": email}).mappings().first()
+            if not u:
+                by_email[email] = 0
+                continue
+            k = random.randint(min_n, max_n)
+            chosen = random.sample(comms, k if k <= len(comms) else len(comms))
+            # Insert memberships
+            assigned = 0
+            for c in chosen:
+                try:
+                    db.execute(text(
+                        "INSERT INTO user_community (user_id, community_id) VALUES (:uid, :cid) ON CONFLICT DO NOTHING"
+                    ), {"uid": u["id"], "cid": c["id"]})
+                    assigned += 1
+                except Exception:
+                    pass
+            # Merge skills
+            cur = list(u.get("skills") or [])
+            add = [c.get("skill1"), c.get("skill2"), c.get("skill3")] if chosen else []
+            # Flatten from all chosen
+            add_all = []
+            for c in chosen:
+                for s in [c.get("skill1"), c.get("skill2"), c.get("skill3")]:
+                    if s:
+                        add_all.append(s)
+            merged = []
+            for s in (cur + add_all):
+                if s and s not in merged:
+                    merged.append(s)
+            db.execute(text(
+                "UPDATE app_user SET skills=:skills, updated_at=now() WHERE id=:uid"
+            ), {"skills": merged, "uid": u["id"]})
+            by_email[email] = assigned
+        db.commit()
+    return jsonify({"communities_assigned": by_email}), 200
+
+
+# -------------------------
+# Admin: Assign random ERGs to users and append ERG skills
+# -------------------------
+@app.post("/api/admin/assign_random_ergs")
+@jwt_required()
+def assign_random_ergs():
+    """Body: { emails?: string[], only_missing?: bool }
+    - If emails provided: target those accounts; otherwise target all users.
+    - If only_missing=true: restrict to users with NULL erg_id.
+    - Sets app_user.erg_id and app_user.erg from a random ERG and appends ERG skills.
+    """
+    payload = request.get_json(silent=True) or {}
+    emails = payload.get("emails")
+    only_missing = bool(payload.get("only_missing", True))
+
+    with SessionLocal() as db:
+        ergs = db.execute(text("SELECT id, name FROM erg" )).mappings().all()
+        if not ergs:
+            return jsonify({"error": "no ERGs found"}), 400
+
+        if emails and isinstance(emails, list) and emails:
+            if only_missing:
+                users = db.execute(text(
+                    "SELECT id, email, skills FROM app_user WHERE email = ANY(:emails) AND erg_id IS NULL"
+                ), {"emails": emails}).mappings().all()
+            else:
+                users = db.execute(text(
+                    "SELECT id, email, skills FROM app_user WHERE email = ANY(:emails)"
+                ), {"emails": emails}).mappings().all()
+        else:
+            if only_missing:
+                users = db.execute(text(
+                    "SELECT id, email, skills FROM app_user WHERE erg_id IS NULL"
+                )).mappings().all()
+            else:
+                users = db.execute(text(
+                    "SELECT id, email, skills FROM app_user"
+                )).mappings().all()
+
+        updated = {}
+        for u in users:
+            choice = random.choice(ergs)
+            db.execute(text(
+                "UPDATE app_user SET erg_id=:eid, erg=:ename, updated_at=now() WHERE id=:uid"
+            ), {"eid": choice["id"], "ename": choice["name"], "uid": u["id"]})
+
+            # Append ERG skills if mapping exists
+            try:
+                erg_skills = ERG_SKILLS_MAP.get(choice["name"])  # type: ignore
+            except Exception:
+                erg_skills = None
+            current = list(u.get("skills") or [])
+            if erg_skills:
+                merged = []
+                for s in (current + list(erg_skills)):
+                    if s and s not in merged:
+                        merged.append(s)
+                db.execute(text(
+                    "UPDATE app_user SET skills=:skills, updated_at=now() WHERE id=:uid"
+                ), {"skills": merged, "uid": u["id"]})
+            updated[u["email"]] = choice["name"]
+
+        db.commit()
+    return jsonify({"assigned": updated}), 200
 # -------------------------
 # Company Analytics Endpoints
 # -------------------------

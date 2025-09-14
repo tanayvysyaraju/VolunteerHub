@@ -21,6 +21,13 @@ export default function CreateEvent() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const handleSignOut = async () => {
+    try {
+      await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (_) {}
+    window.location.href = '/';
+  };
+
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData(prev => ({
@@ -81,6 +88,30 @@ export default function CreateEvent() {
 
   return (
     <div className="create-event">
+      {/* Top Navigation */}
+      <div className="top-nav">
+        <div className="nav-left">
+          <a href="/home" className="nav-btn home-btn">
+            <span className="nav-icon">⌂</span>
+            <span>Home</span>
+          </a>
+          <button onClick={handleSignOut} className="nav-btn signout-btn">
+            <span className="nav-icon">↪</span>
+            <span>Sign Out</span>
+          </button>
+        </div>
+        <div className="nav-right">
+          <a href="/analytics" className="nav-btn analytics-btn">
+            <span className="nav-icon">📊</span>
+            <span>Analytics</span>
+          </a>
+          <a href="/create-event" className="nav-btn create-btn active">
+            <span className="nav-icon">+</span>
+            <span>Create Event</span>
+          </a>
+        </div>
+      </div>
+
       <div className="event-container">
         <header className="event-header">
           <h1>Create New Event</h1>
