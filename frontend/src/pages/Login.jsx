@@ -21,7 +21,7 @@ export default function Login({ onLogin }) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setError(data.error || "Login failed");
     onLogin?.(data.user);
-    nav("/events", { replace: true });
+    nav("/home", { replace: true });
   };
 
   return (

@@ -92,8 +92,8 @@ export default function Landing() {
         return;
       }
       
-      // Redirect to events page after successful login/signup
-      navigate("/events", { replace: true });
+      // Redirect to home page after successful login/signup
+      navigate("/home", { replace: true });
     } catch (err) {
       setError("Network error. Please try again.");
     } finally {

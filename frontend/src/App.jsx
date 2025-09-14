@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
+import Home from "./pages/Home";
 import Events from "./pages/Events";
 
 const API_URL = "http://localhost:8080";
@@ -28,6 +29,14 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login onLogin={setUser} />} />
+        <Route
+          path="/home"
+          element={
+            <RequireAuth>
+              <Home user={user} />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/events"
           element={

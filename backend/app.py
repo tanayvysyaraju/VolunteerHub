@@ -279,5 +279,74 @@ def me():
 def token_info():
     return {"sub": get_jwt_identity(), "exp": get_jwt()["exp"]}, 200
 
+# -------------------------
+# Home Page Endpoints
+# -------------------------
+@app.get("/api/home/recommended-tasks")
+@jwt_required()
+def get_recommended_tasks():
+    """Get 5 recommended tasks for the user"""
+    user_id = get_jwt_identity()
+    
+    # For now, return empty data structure
+    # Later this will be populated with actual recommendations
+    return {
+        "tasks": [],
+        "message": "No recommended tasks available yet. Data will be populated soon."
+    }, 200
+
+@app.get("/api/home/trending-events")
+@jwt_required()
+def get_trending_events():
+    """Get trending events"""
+    user_id = get_jwt_identity()
+    
+    # For now, return empty data structure
+    return {
+        "events": [],
+        "message": "No trending events available yet. Data will be populated soon."
+    }, 200
+
+@app.get("/api/home/analytics")
+@jwt_required()
+def get_analytics():
+    """Get user analytics dashboard data"""
+    user_id = get_jwt_identity()
+    
+    # For now, return empty data structure
+    return {
+        "registered_events": {
+            "total": 0,
+            "this_month": 0,
+            "last_month": 0,
+            "trend": "no_data"
+        },
+        "top_skills": [],
+        "top_interests": [],
+        "progress": {
+            "goal": 0,
+            "current": 0,
+            "percentage": 0,
+            "message": "Set your monthly goal to track progress"
+        },
+        "communities": {
+            "registered": [],
+            "leaderboard": []
+        }
+    }, 200
+
+@app.get("/api/home/communities")
+@jwt_required()
+def get_communities():
+    """Get user's communities and leaderboard"""
+    user_id = get_jwt_identity()
+    
+    # For now, return empty data structure
+    return {
+        "user_communities": [],
+        "leaderboard": [],
+        "message": "No communities available yet. Join communities to see leaderboard."
+    }, 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)
