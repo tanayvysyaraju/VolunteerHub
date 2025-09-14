@@ -794,8 +794,10 @@ def call_gemini_for_subtasks(source_text: str) -> list[dict]:
     )
     payload = {
         "contents": [
-            {"parts": [{"text": system_prompt}]},
-            {"parts": [{"text": source_text[:20000]}]},
+            {
+                "role": "user",
+                "parts": [{"text": f"{system_prompt}\n\n{source_text[:20000]}"}]
+            }
         ]
     }
     headers = {"Content-Type": "application/json"}
@@ -810,6 +812,7 @@ def call_gemini_for_subtasks(source_text: str) -> list[dict]:
 
     tasks = []
     if text_out:
+        # Try to find JSON array in the response
         m = re.search(r"\[(.*?)\]", text_out, re.S)
         if m:
             frag = "[" + m.group(1) + "]"
@@ -822,7 +825,24 @@ def call_gemini_for_subtasks(source_text: str) -> list[dict]:
                                 "title": str(obj.get("title"))[:120],
                                 "description": str(obj.get("description", ""))[:280]
                             })
-            except Exception:
+            except Exception as e:
+                print(f"Error parsing Gemini subtasks JSON: {e}")
+                print(f"Raw response: {text_out}")
+                tasks = []
+        else:
+            # If no array found, try to parse the entire response as JSON
+            try:
+                parsed = json.loads(text_out.strip())
+                if isinstance(parsed, list):
+                    for obj in parsed[:3]:
+                        if isinstance(obj, dict) and obj.get("title"):
+                            tasks.append({
+                                "title": str(obj.get("title"))[:120],
+                                "description": str(obj.get("description", ""))[:280]
+                            })
+            except Exception as e:
+                print(f"Error parsing Gemini subtasks as direct JSON: {e}")
+                print(f"Raw response: {text_out}")
                 tasks = []
     return tasks[:3]
 
@@ -2218,6 +2238,132 @@ def get_company_trends():
         "participation_trends": {"daily_average": daily_avg},
         "predictive_insights": {"projected_hours": int(round(minutes_month / 60)), "engagement_forecast": forecast}
     }, 200
+
+@app.post("/api/admin/test_gemini_subtasks")
+@jwt_required()
+def test_gemini_subtasks():
+    """Test endpoint to debug Gemini subtask generation."""
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "Design and launch a social media campaign for fundraising")
+    
+    try:
+        subtasks = call_gemini_for_subtasks(text)
+        return jsonify({
+            "input_text": text,
+            "subtasks": subtasks,
+            "count": len(subtasks),
+            "gemini_api_key_set": bool(GEMINI_API_KEY)
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "input_text": text,
+            "subtasks": [],
+            "gemini_api_key_set": bool(GEMINI_API_KEY)
+        }), 500
+
+@app.get("/api/admin/users")
+@jwt_required()
+def get_all_users():
+    """Get all users with their task registration counts."""
+    with SessionLocal() as db:
+        users = db.execute(text("""
+            SELECT 
+                u.id,
+                u.email,
+                u.full_name,
+                u.position,
+                u.dept,
+                COUNT(utr.task_id) as task_count
+            FROM app_user u
+            LEFT JOIN user_task_registration utr ON u.id = utr.user_id
+            GROUP BY u.id, u.email, u.full_name, u.position, u.dept
+            ORDER BY u.created_at DESC
+        """)).mappings().all()
+        
+        return jsonify({
+            "users": [dict(user) for user in users],
+            "total": len(users)
+        }), 200
+
+@app.delete("/api/admin/users/<uuid:user_id>")
+@jwt_required()
+def delete_user(user_id):
+    """Delete a user and all their data."""
+    with SessionLocal() as db:
+        # First check if user exists
+        user = db.execute(text("SELECT id, email FROM app_user WHERE id = :id"), {"id": user_id}).mappings().first()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Delete user task registrations
+        db.execute(text("DELETE FROM user_task_registration WHERE user_id = :id"), {"id": user_id})
+        
+        # Update task registered counts
+        db.execute(text("""
+            UPDATE event_task 
+            SET registered_count = GREATEST(COALESCE(registered_count,0) - (
+                SELECT COUNT(*) FROM user_task_registration WHERE task_id = event_task.id AND user_id = :id
+            ), 0)
+            WHERE id IN (SELECT task_id FROM user_task_registration WHERE user_id = :id)
+        """), {"id": user_id})
+        
+        # Delete the user
+        db.execute(text("DELETE FROM app_user WHERE id = :id"), {"id": user_id})
+        
+        db.commit()
+        
+        return jsonify({
+            "message": f"User {user['email']} deleted successfully",
+            "deleted_user_id": str(user_id)
+        }), 200
+
+@app.post("/api/admin/delete_unregistered_users")
+@jwt_required()
+def delete_unregistered_users():
+    """Delete users who are not registered for any tasks."""
+    data = request.get_json(silent=True) or {}
+    limit = data.get("limit", 40)  # Default to 40 users
+    
+    with SessionLocal() as db:
+        # Get users with no task registrations
+        unregistered_users = db.execute(text("""
+            SELECT u.id, u.email, u.full_name
+            FROM app_user u
+            LEFT JOIN user_task_registration utr ON u.id = utr.user_id
+            WHERE utr.user_id IS NULL
+            ORDER BY u.created_at ASC
+            LIMIT :limit
+        """), {"limit": limit}).mappings().all()
+        
+        if not unregistered_users:
+            return jsonify({"message": "No unregistered users found", "deleted": 0}), 200
+        
+        deleted_count = 0
+        deleted_users = []
+        
+        for user in unregistered_users:
+            try:
+                # Delete the user
+                db.execute(text("DELETE FROM app_user WHERE id = :id"), {"id": user["id"]})
+                deleted_count += 1
+                deleted_users.append({
+                    "id": str(user["id"]),
+                    "email": user["email"],
+                    "full_name": user["full_name"]
+                })
+            except Exception as e:
+                print(f"Error deleting user {user['email']}: {e}")
+                continue
+        
+        db.commit()
+        
+        return jsonify({
+            "message": f"Deleted {deleted_count} unregistered users",
+            "deleted_users": deleted_users,
+            "deleted_count": deleted_count
+        }), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)
