@@ -1,5 +1,9 @@
 import os
 from datetime import timedelta, datetime, timezone
+from collections import Counter
+import re
+import requests
+import json
 from flask import Flask, request, jsonify, make_response, redirect
 from flask_cors import CORS
 from flask_jwt_extended import (
@@ -7,7 +11,7 @@ from flask_jwt_extended import (
     jwt_required, set_access_cookies, unset_jwt_cookies
 )
 from werkzeug.security import generate_password_hash, check_password_hash
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -15,9 +19,10 @@ from sqlalchemy.orm import sessionmaker
 # -------------------------
 # Config
 # -------------------------
-load_dotenv()
+load_dotenv(find_dotenv())
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-change-me")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 PORT = int(os.getenv("PORT", "8080"))
 
@@ -87,6 +92,74 @@ def fetch_user_by_id(db, user_id):
 
 # Run once at startup
 ensure_password_column()
+
+# -------------------------
+# Skill vocabulary (50 common skills)
+# -------------------------
+SKILL_VOCAB: list[str] = [
+    "Leadership", "Communication", "Project Management", "Product Management", "UX Design",
+    "UI Design", "Graphic Design", "Content Strategy", "Marketing", "SEO",
+    "Social Media", "Data Analysis", "Statistics", "SQL", "Python",
+    "Machine Learning", "Deep Learning", "NLP", "Computer Vision", "Cloud Architecture",
+    "AWS", "Azure", "GCP", "DevOps", "CI/CD",
+    "Docker", "Kubernetes", "Cybersecurity", "Risk Assessment", "Networking",
+    "Backend Development", "Frontend Development", "Full-Stack Development", "JavaScript", "React",
+    "Node.js", "Java", "Spring Boot", "APIs", "Microservices",
+    "PostgreSQL", "NoSQL", "Electrical Engineering", "Civil Engineering", "Biomedical Engineering",
+    "Research", "Clinical Trials", "Healthcare", "Community Management", "Sustainability"
+]
+
+# Simple keyword→skill mapping used to pick top-3 from text
+KEYWORD_TO_SKILL: dict[str, str] = {
+    # tech stacks
+    "javascript": "JavaScript", "react": "React", "node": "Node.js", "node.js": "Node.js",
+    "java ": "Java", " spring ": "Spring Boot", "spring boot": "Spring Boot", "api": "APIs",
+    "microservice": "Microservices", "postgres": "PostgreSQL", "postgresql": "PostgreSQL",
+    "nosql": "NoSQL", "sql": "SQL",
+    # ml/ai
+    "machine learning": "Machine Learning", "deep learning": "Deep Learning", "nlp": "NLP",
+    "computer vision": "Computer Vision", "python": "Python", "statistics": "Statistics",
+    # cloud/devops
+    "aws": "AWS", "azure": "Azure", "gcp": "GCP", "cloud": "Cloud Architecture",
+    "devops": "DevOps", "ci/cd": "CI/CD", "docker": "Docker", "kubernetes": "Kubernetes",
+    # security/networking
+    "cyber": "Cybersecurity", "security": "Cybersecurity", "risk": "Risk Assessment",
+    "network": "Networking",
+    # design/product/content/marketing
+    "product": "Product Management", "project": "Project Management", "ux": "UX Design",
+    "ui ": "UI Design", "graphic": "Graphic Design", "content": "Content Strategy",
+    "marketing": "Marketing", "seo": "SEO", "social": "Social Media",
+    # community/healthcare/engineering/sustainability
+    "community": "Community Management", "health": "Healthcare", "clinical": "Clinical Trials",
+    "research": "Research", "electrical": "Electrical Engineering", "civil": "Civil Engineering",
+    "biomedical": "Biomedical Engineering", "sustain": "Sustainability",
+}
+
+
+# ERG → 3 canonical skills mapping (chosen from SKILL_VOCAB)
+ERG_SKILLS_MAP: dict[str, list[str]] = {
+    "Women in Leadership / Women@": ["Leadership", "Communication", "Project Management"],
+    "Black Employee Network / Black Professionals ERG": ["Leadership", "Community Management", "Communication"],
+    "Latinx / Hispanic Heritage Network": ["Community Management", "Marketing", "Social Media"],
+    "Asian Pacific Islander Network": ["Community Management", "Content Strategy", "Marketing"],
+    "South Asian Professionals Network": ["Community Management", "Data Analysis", "Communication"],
+    "LGBTQ+ Pride Network": ["Community Management", "Communication", "Content Strategy"],
+    "Veterans & Military Families Network": ["Leadership", "Project Management", "Networking"],
+    "Disability & Neurodiversity Alliance": ["UX Design", "Content Strategy", "Community Management"],
+    "Parents & Caregivers ERG": ["Community Management", "Communication", "Project Management"],
+    "Young Professionals / NextGen ERG": ["Communication", "Project Management", "Data Analysis"],
+    "Multifaith / Interfaith Network": ["Community Management", "Communication", "Leadership"],
+    "Mental Health & Wellness Network": ["Data Analysis", "Community Management", "Communication"],
+    "Environmental & Sustainability Group (Green Team)": ["Sustainability", "Project Management", "Data Analysis"],
+    "International Employees Network / Global Cultures ERG": ["Community Management", "Communication", "Marketing"],
+    "Native & Indigenous Peoples Network": ["Community Management", "Content Strategy", "Communication"],
+    "African Diaspora Network": ["Community Management", "Leadership", "Marketing"],
+    "Middle Eastern & North African (MENA) ERG": ["Community Management", "Communication", "Marketing"],
+    "Men as Allies / Gender Equity Advocates": ["Leadership", "Communication", "Project Management"],
+    "Volunteers & Community Impact Network": ["Community Management", "Project Management", "Marketing"],
+    "Multicultural / Diversity & Inclusion Council": ["Leadership", "Community Management", "Data Analysis"],
+}
+
 
 # -------------------------
 # Event helpers
@@ -193,6 +266,14 @@ def signup():
         if existing:
             return jsonify({"error": "email already registered"}), 409
 
+        # Compute final skills to store (merge provided + ERG implied)
+        combined_skills = _as_list(skills)
+        if erg:
+            implied = ERG_SKILLS_MAP.get(erg, [])
+            for s in implied:
+                if s in SKILL_VOCAB and s not in combined_skills:
+                    combined_skills.append(s)
+
         # Insert user with all fields
         row = db.execute(text("""
             INSERT INTO app_user (
@@ -216,7 +297,7 @@ def signup():
             "user_name": user_name, "company": company, "position": position, "dept": dept, "erg": erg,
             "location_city": location_city, "location_state": location_state, "tz": tz,
             "strengths": strengths, "interests": interests, "expertise": expertise, "communication_style": communication_style,
-            "skills": _as_list(skills)
+            "skills": combined_skills
         }).mappings().first()
         db.commit()
 
@@ -363,26 +444,15 @@ def create_organization():
 @jwt_required()
 def create_event():
     """
-    Body JSON:
+    Body JSON (minimal):
     {
-      "organization_id": 1,
       "title": "...",
       "description": "...",
       "mode": "in_person" | "virtual" | "hybrid",
-      "location_city": "City", "location_state": "ST",
-      "location_lat": 40.7, "location_lng": -74.0,
-      "is_remote": false,
-      "causes": ["hunger","community"],         # or "hunger, community"
-      "skills_needed": ["logistics","outreach"],
-      "accessibility": ["wheelchair"],          # optional
-      "tags": ["weekend","family"],             # optional
-      "min_duration_min": 120,                  # optional
+      "location_city": "City",
+      "location_state": "ST",
       "rsvp_url": "https://...",
-      "contact_email": "org@example.org",
-      "sessions": [                             # optional
-        {"start_ts": "2025-10-01T09:00:00Z", "end_ts": "2025-10-01T12:00:00Z",
-         "capacity": 25, "meet_url": null, "address_line": "123 Main St"}
-      ]
+      "contact_email": "org@example.org"
     }
     """
     data = request.get_json(silent=True) or {}
@@ -396,13 +466,14 @@ def create_event():
     if mode not in VALID_EVENT_MODES:
         return jsonify({"error": f"mode must be one of {sorted(VALID_EVENT_MODES)}"}), 400
 
-    causes = _as_list(data.get("causes"))
-    skills = _as_list(data.get("skills_needed"))
-    accessibility = _as_list(data.get("accessibility"))
-    tags = _as_list(data.get("tags"))
-    min_duration = data.get("min_duration_min", 60)
-    is_remote = bool(data.get("is_remote", False))
-    sessions = data.get("sessions") or []
+    # Minimal fields only
+    causes = []
+    skills = []
+    accessibility = []
+    tags = []
+    min_duration = 60
+    is_remote = False
+    sessions = []
 
     # Validate/normalize sessions
     norm_sessions = []
@@ -423,12 +494,7 @@ def create_event():
         return jsonify({"error": f"invalid session timestamp format: {e}"}), 400
 
     with SessionLocal() as db:
-        # Check org if provided
-        organization_id = data.get("organization_id")
-        if organization_id:
-            org = db.execute(text("SELECT id FROM organization WHERE id = :id"), {"id": organization_id}).first()
-            if not org:
-                return jsonify({"error": "organization_id not found"}), 400
+        organization_id = None
 
         # Insert event
         ev = db.execute(text("""
@@ -455,8 +521,8 @@ def create_event():
             "mode": mode,
             "location_city": data.get("location_city"),
             "location_state": data.get("location_state"),
-            "location_lat": data.get("location_lat"),
-            "location_lng": data.get("location_lng"),
+            "location_lat": None,
+            "location_lng": None,
             "is_remote": is_remote,
             "causes": causes,
             "skills_needed": skills,
@@ -467,32 +533,8 @@ def create_event():
             "contact_email": data.get("contact_email"),
         }).mappings().first()
 
-        # Insert sessions
+        # Sessions removed in minimal API
         created_sessions = []
-        for s in norm_sessions:
-            # Convert empty capacity to None
-            capacity = s.get("capacity")
-            if capacity == "" or capacity is None:
-                capacity = None
-            else:
-                try:
-                    capacity = int(capacity)
-                except (ValueError, TypeError):
-                    capacity = None
-            
-            row = db.execute(text("""
-                INSERT INTO event_session (event_id, start_ts, end_ts, capacity, meet_url, address_line)
-                VALUES (:event_id, :start_ts, :end_ts, :capacity, :meet_url, :address_line)
-                RETURNING id, event_id, start_ts, end_ts, capacity, meet_url, address_line
-            """), {
-                "event_id": ev["id"], 
-                "start_ts": s["start_ts"],
-                "end_ts": s["end_ts"],
-                "capacity": capacity,
-                "meet_url": s.get("meet_url") or None,
-                "address_line": s.get("address_line") or None
-            }).mappings().first()
-            created_sessions.append(dict(row))
 
         db.commit()
 
@@ -500,6 +542,50 @@ def create_event():
     for s in created_sessions:
         s["start_ts"] = s["start_ts"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         s["end_ts"]   = s["end_ts"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # Optionally generate subtasks via Gemini
+    if data.get("generate_tasks"):
+        desc = data.get("description", "")
+        base_text = f"{data.get('title','')}\n\n{desc}"
+        subtasks = []
+        try:
+            subtasks = call_gemini_for_subtasks(base_text)
+        except Exception:
+            subtasks = []
+
+        # Fallback: if no subtasks, create one default task from the main event
+        if not subtasks:
+            subtasks = [{
+                "title": (data.get("title") or "Task")[:120],
+                "description": (desc or "")[:280]
+            }]
+
+        with SessionLocal() as db:
+            for st in subtasks:
+                # infer 3 skills for each subtask
+                inferred = []
+                try:
+                    inferred = call_gemini_for_skills(f"{st.get('title','')}. {st.get('description','')}") or []
+                except Exception:
+                    inferred = []
+                if not inferred:
+                    lc = f" {st.get('title','').lower()} {st.get('description','').lower()} "
+                    counts = Counter()
+                    for kw, skill in KEYWORD_TO_SKILL.items():
+                        if kw in lc:
+                            counts[skill] += lc.count(kw)
+                    inferred = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
+
+                db.execute(text("""
+                    INSERT INTO event_task (event_id, title, description, skills_required, priority, status)
+                    VALUES (:event_id, :title, :description, :skills_required, 'medium', 'open')
+                """), {
+                    "event_id": ev["id"],
+                    "title": st.get("title", "Task"),
+                    "description": st.get("description", ""),
+                    "skills_required": inferred
+                })
+            db.commit()
 
     return jsonify({"event": dict(ev), "sessions": created_sessions}), 201
 
@@ -533,6 +619,244 @@ def list_ergs():
     return jsonify({"ergs": [dict(r) for r in rows]}), 200
 
 # -------------------------
+# Skills API
+# -------------------------
+@app.get("/api/skills/vocab")
+def get_skill_vocab():
+    return jsonify({"skills": SKILL_VOCAB}), 200
+
+
+@app.post("/api/skills/suggest")
+def suggest_skills():
+    """Return up to 3 skills from SKILL_VOCAB inferred from provided text or latest Slack import.
+    Body: { text?: string, slack_source?: "latest", use_gemini?: bool }
+    """
+    data = request.get_json(silent=True) or {}
+    source_text = data.get("text") or ""
+    use_gemini = bool(data.get("use_gemini") and GEMINI_API_KEY)
+    if not source_text and data.get("slack_source") == "latest":
+        with SessionLocal() as db:
+            row = db.execute(text("""
+                SELECT raw_json FROM slack_raw_import ORDER BY id DESC LIMIT 1
+            """)).first()
+            if row and row[0]:
+                try:
+                    payload = json.loads(row[0])
+                    # Concatenate all message texts
+                    chunks = []
+                    for ch in payload:
+                        for m in ch.get("messages", []):
+                            t = m.get("text")
+                            if t:
+                                chunks.append(str(t))
+                    source_text = "\n".join(chunks)
+                except Exception:
+                    source_text = ""
+
+    if use_gemini and source_text:
+        try:
+            suggestions = call_gemini_for_skills(source_text)
+            if suggestions:
+                return jsonify({"suggested_skills": suggestions[:3]}), 200
+        except Exception:
+            # fall back to keyword matcher
+            pass
+
+    # Fallback keyword-based matcher
+    lc = f" {source_text.lower()} "
+    counts: Counter = Counter()
+    for kw, skill in KEYWORD_TO_SKILL.items():
+        if kw in lc:
+            counts[skill] += lc.count(kw)
+    ranked = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
+    return jsonify({"suggested_skills": ranked}), 200
+
+
+def textwrap_sql(s: str) -> str:
+    return s
+
+
+def call_gemini_for_skills(source_text: str) -> list:
+    """Call Gemini to map free text to top 3 skills from SKILL_VOCAB.
+    Returns a list of skills (strings) present in SKILL_VOCAB.
+    """
+    if not GEMINI_API_KEY:
+        return []
+
+    # Build strict prompt
+    vocab_list = "\n".join(f"- {s}" for s in SKILL_VOCAB)
+    system_prompt = (
+        "You are given internal Slack-like messages. From the content, infer the most relevant 3 skills "
+        "STRICTLY chosen from the provided SKILL_VOCAB list. Respond ONLY with a compact JSON array of exactly 3 strings.\n\n"
+        f"SKILL_VOCAB (canonical names):\n{vocab_list}\n\n"
+        "Rules:\n"
+        "- Only return skills from SKILL_VOCAB.\n"
+        "- Return exactly 3 skills, best matching the text.\n"
+        "- Output must be valid JSON, no markdown, no extra commentary.\n"
+    )
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+    )
+    payload = {
+        "contents": [
+            {"parts": [{"text": system_prompt}]},
+            {"parts": [{"text": source_text[:20000]}]},  # safety limit
+        ]
+    }
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    text_out = ""
+    try:
+        text_out = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        text_out = ""
+
+    # Extract JSON array from model output
+    arr = []
+    if text_out:
+        m = re.search(r"\[(.*?)\]", text_out, re.S)
+        if m:
+            frag = "[" + m.group(1) + "]"
+            try:
+                parsed = json.loads(frag)
+                if isinstance(parsed, list):
+                    arr = [str(x) for x in parsed]
+            except Exception:
+                arr = []
+
+    # Normalize and keep only known skills
+    canon = {s.lower(): s for s in SKILL_VOCAB}
+    out = []
+    for x in arr:
+        key = x.strip().lower()
+        # try direct match; otherwise soft match by inclusion
+        if key in canon:
+            out.append(canon[key])
+        else:
+            # soft contain
+            hit = next((canon[k] for k in canon.keys() if k in key), None)
+            if hit:
+                out.append(hit)
+    # de-dupe and cap 3
+    seen = set()
+    dedup = []
+    for s in out:
+        if s not in seen and s in SKILL_VOCAB:
+            seen.add(s)
+            dedup.append(s)
+    return dedup[:3]
+
+
+def call_gemini_for_subtasks(source_text: str) -> list[dict]:
+    """Call Gemini to split an event description into up to 3 actionable, short tasks.
+    Returns list of {title, description}.
+    """
+    if not GEMINI_API_KEY:
+        return []
+
+    system_prompt = (
+        "You are given an event description. Create exactly 3 concise, actionable volunteer tasks.\n"
+        "Each task should have:\n- title (<= 8 words)\n- description (1 short sentence).\n"
+        "Respond ONLY with a JSON array of 3 objects with keys: title, description. No markdown."
+    )
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+    )
+    payload = {
+        "contents": [
+            {"parts": [{"text": system_prompt}]},
+            {"parts": [{"text": source_text[:20000]}]},
+        ]
+    }
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    text_out = ""
+    try:
+        text_out = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        text_out = ""
+
+    tasks = []
+    if text_out:
+        m = re.search(r"\[(.*?)\]", text_out, re.S)
+        if m:
+            frag = "[" + m.group(1) + "]"
+            try:
+                parsed = json.loads(frag)
+                if isinstance(parsed, list):
+                    for obj in parsed[:3]:
+                        if isinstance(obj, dict) and obj.get("title"):
+                            tasks.append({
+                                "title": str(obj.get("title"))[:120],
+                                "description": str(obj.get("description", ""))[:280]
+                            })
+            except Exception:
+                tasks = []
+    return tasks[:3]
+
+
+def call_gemini_rank_tasks(user_skills: list[str], tasks: list[dict]) -> list[str]:
+    """Ask Gemini to pick up to 5 best task ids for a user based on skill fit.
+
+    tasks: each item must contain {id, title, description, skills_required}
+    Returns list of task ids (strings).
+    """
+    if not GEMINI_API_KEY or not tasks:
+        return []
+
+    # Build concise candidate list
+    lines = []
+    for t in tasks[:50]:  # cap prompt size
+        sid = str(t.get("id"))
+        title = str(t.get("title", ""))[:120]
+        desc = str(t.get("description", ""))[:240]
+        sk = ", ".join(t.get("skills_required") or [])
+        lines.append(f"id={sid} | title={title} | skills=[{sk}] | desc={desc}")
+
+    vocab_list = "\n".join(f"- {s}" for s in SKILL_VOCAB)
+    sys_prompt = (
+        "Given a user's skills and a set of candidate tasks (with skills), pick up to 5 tasks that best match.\n"
+        "Respond ONLY with a JSON array of task ids (strings). No extra text.\n\n"
+        f"USER_SKILLS: {', '.join(user_skills)}\n\n"
+        f"SKILL_VOCAB (canonical):\n{vocab_list}\n\n"
+        "CANDIDATES (one per line):\n" + "\n".join(lines)
+    )
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+    )
+    payload = {"contents": [{"parts": [{"text": sys_prompt}]}]}
+    headers = {"Content-Type": "application/json"}
+    try:
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        text_out = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        return []
+
+    # Parse JSON array of ids
+    out = []
+    m = re.search(r"\[(.*?)\]", text_out or "", re.S)
+    if m:
+        frag = "[" + m.group(1) + "]"
+        try:
+            parsed = json.loads(frag)
+            if isinstance(parsed, list):
+                out = [str(x) for x in parsed][:5]
+        except Exception:
+            out = []
+    return out
+
+# -------------------------
 # List Events (for admin/review)
 # -------------------------
 @app.get("/api/events")
@@ -557,7 +881,7 @@ def list_events():
 def create_event_task(event_id):
     """Create a new task for an event"""
     data = request.get_json()
-    _require_fields(data, ["title"])
+    _require_fields(data, ["title"])  # description optional
     
     with SessionLocal() as db:
         # Check if event exists
@@ -565,6 +889,35 @@ def create_event_task(event_id):
         if not event:
             return jsonify({"error": "Event not found"}), 404
         
+        # Decide skills_required
+        provided_skills = _as_list(data.get("skills_required", ""))
+        skills_required = provided_skills
+
+        # Optionally infer using Gemini (or fallback keywords) from title+description
+        if not skills_required or data.get("use_gemini"):
+            td_text = f"{data.get('title','')}.\n{data.get('description','')}"
+            inferred: list[str] = []
+            try:
+                if data.get("use_gemini") and GEMINI_API_KEY:
+                    inferred = call_gemini_for_skills(td_text) or []
+            except Exception:
+                inferred = []
+            # fallback keyword-based if still empty
+            if not inferred:
+                lc = f" {td_text.lower()} "
+                counts = Counter()
+                for kw, skill in KEYWORD_TO_SKILL.items():
+                    if kw in lc:
+                        counts[skill] += lc.count(kw)
+                inferred = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
+
+            # merge with provided, cap 3
+            merged = []
+            for s in (provided_skills + inferred):
+                if s and s in SKILL_VOCAB and s not in merged:
+                    merged.append(s)
+            skills_required = merged[:3]
+
         # Create task
         task = db.execute(text("""
             INSERT INTO event_task (event_id, title, description, skills_required, estimated_duration_min, priority, status)
@@ -574,7 +927,7 @@ def create_event_task(event_id):
             "event_id": event_id,
             "title": data["title"],
             "description": data.get("description", ""),
-            "skills_required": _as_list(data.get("skills_required", "")),
+            "skills_required": skills_required,
             "estimated_duration_min": data.get("estimated_duration_min"),
             "priority": data.get("priority", "medium"),
             "status": data.get("status", "open")
@@ -601,25 +954,40 @@ def get_event_tasks(event_id):
 @app.get("/api/tasks/recommended")
 @jwt_required()
 def get_recommended_event_tasks():
-    """Get recommended tasks for the user based on their skills and interests"""
+    """Recommend up to 5 tasks for the user. If GEMINI_API_KEY is set and use_gemini=true in query,
+    use Gemini to rank tasks, else use simple overlap scoring."""
     user_id = get_jwt_identity()
-    
+
     with SessionLocal() as db:
-        # Get user's skills and interests
-        user = db.execute(text("""
-            SELECT interests, strengths, expertise
-            FROM app_user 
-            WHERE id = :user_id
-        """), {"user_id": user_id}).mappings().first()
-        
-        if not user:
+        usr = db.execute(text("""
+            SELECT skills FROM app_user WHERE id = :uid
+        """), {"uid": user_id}).mappings().first()
+        if not usr:
             return jsonify({"error": "User not found"}), 404
-        
-        # For now, return empty data - later this will use AI matching
-        return jsonify({
-            "tasks": [],
-            "message": "No recommended tasks available yet. AI matching will be implemented soon."
-        }), 200
+        user_skills = (usr.get("skills") or [])
+
+        tasks = db.execute(text("""
+            SELECT id, event_id, title, description, skills_required, priority, status, created_at
+            FROM event_task
+            WHERE status = 'open'
+            ORDER BY created_at DESC
+        """)).mappings().all()
+
+        # Gemini-based ranking if requested
+        from flask import request as _rq
+        if _rq.args.get("use_gemini") == "true" and GEMINI_API_KEY:
+            wanted_ids = set(call_gemini_rank_tasks(user_skills, [dict(t) for t in tasks]))
+            if wanted_ids:
+                ranked = [t for t in tasks if str(t["id"]) in wanted_ids]
+                return jsonify({"tasks": [dict(t) for t in ranked]}), 200
+            # fall back to overlap scoring if Gemini returned nothing
+
+        # Fallback overlap scoring
+        def score(t):
+            ts = t.get("skills_required") or []
+            return len({s for s in ts if s in user_skills})
+        ranked = sorted(tasks, key=score, reverse=True)[:5]
+        return jsonify({"tasks": [dict(t) for t in ranked]}), 200
 
 @app.put("/api/tasks/<uuid:task_id>/assign")
 @jwt_required()

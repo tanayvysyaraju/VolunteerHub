@@ -1,27 +1,20 @@
 // src/pages/CreateEvent.jsx
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./CreateEvent.css";
 
 const API_URL = "http://localhost:8080";
 
 export default function CreateEvent() {
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     title: "",
     description: "",
     mode: "in_person",
     location_city: "",
     location_state: "",
-    location_lat: "",
-    location_lng: "",
-    is_remote: false,
-    causes: "",
-    skills_needed: "",
-    accessibility: "",
-    tags: "",
-    min_duration_min: 60,
     rsvp_url: "",
-    contact_email: "",
-    sessions: []
+    contact_email: ""
   });
 
   const [loading, setLoading] = useState(false);
@@ -36,29 +29,7 @@ export default function CreateEvent() {
     }));
   };
 
-  const addSession = () => {
-    setFormData(prev => ({
-      ...prev,
-      sessions: [
-        ...prev.sessions,
-        { start_ts: "", end_ts: "", capacity: "", meet_url: "", address_line: "" }
-      ]
-    }));
-  };
-
-  const removeSession = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      sessions: prev.sessions.filter((_, i) => i !== index)
-    }));
-  };
-
-  const updateSession = (index, field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      sessions: prev.sessions.map((s, i) => (i === index ? { ...s, [field]: value } : s))
-    }));
-  };
+  // sessions removed
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -68,13 +39,13 @@ export default function CreateEvent() {
 
       try {
         const submitData = {
-          ...formData,
-          location_lat: formData.location_lat ? parseFloat(formData.location_lat) : null,
-          location_lng: formData.location_lng ? parseFloat(formData.location_lng) : null,
-          causes: formData.causes.split(",").map(x => x.trim()).filter(Boolean),
-          skills_needed: formData.skills_needed.split(",").map(x => x.trim()).filter(Boolean),
-          accessibility: formData.accessibility.split(",").map(x => x.trim()).filter(Boolean),
-          tags: formData.tags.split(",").map(x => x.trim()).filter(Boolean)
+          title: formData.title,
+          description: formData.description,
+          mode: formData.mode,
+          location_city: formData.location_city,
+          location_state: formData.location_state,
+          rsvp_url: formData.rsvp_url,
+          contact_email: formData.contact_email
         };
 
       const res = await fetch(`${API_URL}/api/events`, {
@@ -95,18 +66,12 @@ export default function CreateEvent() {
           mode: "in_person",
           location_city: "",
           location_state: "",
-          location_lat: "",
-          location_lng: "",
-          is_remote: false,
-          causes: "",
-          skills_needed: "",
-          accessibility: "",
-          tags: "",
-          min_duration_min: 60,
           rsvp_url: "",
-          contact_email: "",
-          sessions: []
+          contact_email: ""
         });
+
+        // Reroute to dashboard/home after successful creation
+        navigate("/home", { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -201,110 +166,12 @@ export default function CreateEvent() {
               </div>
             </div>
 
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="location_lat">Latitude</label>
-                <input
-                  type="number"
-                  step="any"
-                  id="location_lat"
-                  name="location_lat"
-                  value={formData.location_lat}
-                  onChange={handleInputChange}
-                  placeholder="40.7128"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="location_lng">Longitude</label>
-                <input
-                  type="number"
-                  step="any"
-                  id="location_lng"
-                  name="location_lng"
-                  value={formData.location_lng}
-                  onChange={handleInputChange}
-                  placeholder="-74.0060"
-                />
-              </div>
-            </div>
-
-            <div className="form-group checkbox-group">
-              <label>
-                <input
-                  type="checkbox"
-                  name="is_remote"
-                  checked={formData.is_remote}
-                  onChange={handleInputChange}
-                />
-                Remote-friendly event
-              </label>
-            </div>
+            {/* removed lat/lng and remote */}
           </div>
 
-          {/* Event Details */}
+          {/* Event Details (minimal) */}
           <div className="form-section">
             <h2>Event Details</h2>
-
-            <div className="form-group">
-              <label htmlFor="causes">Causes (comma-separated)</label>
-              <input
-                type="text"
-                id="causes"
-                name="causes"
-                value={formData.causes}
-                onChange={handleInputChange}
-                placeholder="hunger, education, environment, community"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="skills_needed">Skills Needed (comma-separated)</label>
-              <input
-                type="text"
-                id="skills_needed"
-                name="skills_needed"
-                value={formData.skills_needed}
-                onChange={handleInputChange}
-                placeholder="logistics, communication, teaching, technology"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="accessibility">Accessibility Features (comma-separated)</label>
-              <input
-                type="text"
-                id="accessibility"
-                name="accessibility"
-                value={formData.accessibility}
-                onChange={handleInputChange}
-                placeholder="wheelchair accessible, sign language interpreter"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="tags">Tags (comma-separated)</label>
-              <input
-                type="text"
-                id="tags"
-                name="tags"
-                value={formData.tags}
-                onChange={handleInputChange}
-                placeholder="weekend, family-friendly, outdoor"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="min_duration_min">Minimum Duration (minutes)</label>
-              <input
-                type="number"
-                id="min_duration_min"
-                name="min_duration_min"
-                value={formData.min_duration_min}
-                onChange={handleInputChange}
-                min="15"
-              />
-            </div>
-
             <div className="form-group">
               <label htmlFor="rsvp_url">RSVP URL</label>
               <input
@@ -316,7 +183,6 @@ export default function CreateEvent() {
                 placeholder="https://example.com/rsvp"
               />
             </div>
-
             <div className="form-group">
               <label htmlFor="contact_email">Contact Email</label>
               <input
@@ -330,71 +196,7 @@ export default function CreateEvent() {
             </div>
           </div>
 
-          {/* Event Sessions */}
-          <div className="form-section">
-            <h2>Event Sessions (Optional)</h2>
-            <p>Add specific time slots for your event</p>
-
-            {formData.sessions.map((session, index) => (
-              <div key={index} className="session-card">
-                <h3>Session {index + 1}</h3>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Start Time</label>
-                    <input
-                      type="datetime-local"
-                      value={session.start_ts}
-                      onChange={(e) => updateSession(index, "start_ts", e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>End Time</label>
-                    <input
-                      type="datetime-local"
-                      value={session.end_ts}
-                      onChange={(e) => updateSession(index, "end_ts", e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Capacity</label>
-                    <input
-                      type="number"
-                      value={session.capacity}
-                      onChange={(e) => updateSession(index, "capacity", e.target.value)}
-                      placeholder="Maximum participants"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Meeting URL (for virtual)</label>
-                    <input
-                      type="url"
-                      value={session.meet_url}
-                      onChange={(e) => updateSession(index, "meet_url", e.target.value)}
-                      placeholder="https://meet.example.com/room"
-                    />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label>Address</label>
-                  <input
-                    type="text"
-                    value={session.address_line}
-                    onChange={(e) => updateSession(index, "address_line", e.target.value)}
-                    placeholder="123 Main St, City, State"
-                  />
-                </div>
-                <button type="button" onClick={() => removeSession(index)} className="remove-session-btn">
-                  Remove Session
-                </button>
-              </div>
-            ))}
-
-            <button type="button" onClick={addSession} className="add-session-btn">
-              + Add Session
-            </button>
-          </div>
+          {/* Sessions removed */}
 
           {/* Submit */}
           <div className="form-actions">

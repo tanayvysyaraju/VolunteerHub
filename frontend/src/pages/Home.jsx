@@ -19,7 +19,7 @@ export default function Home({ user }) {
   const fetchHomeData = async () => {
     try {
       const [tasksRes, eventsRes, analyticsRes, communitiesRes] = await Promise.all([
-        fetch(`${API_URL}/api/home/recommended-tasks`, { credentials: "include" }),
+        fetch(`${API_URL}/api/tasks/recommended?use_gemini=true`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/trending-events`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/analytics`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/communities`, { credentials: "include" })
@@ -90,16 +90,32 @@ export default function Home({ user }) {
         
         <div className="slider-container">
           <div className="slider-track" style={{ transform: `translateX(-${currentSlide * 20}%)` }}>
-            {Array.from({ length: 5 }, (_, i) => (
-              <div key={i} className="slider-item">
-                <div className="empty-state">
-                  <div className="empty-icon">📋</div>
-                  <h3>Task {i + 1}</h3>
-                  <p>No recommended tasks yet</p>
-                  <span className="coming-soon">Coming Soon</span>
+            {Array.from({ length: 5 }, (_, i) => {
+              const t = recommendedTasks[i];
+              return (
+                <div key={i} className="slider-item">
+                  {t ? (
+                    <div className="task-card">
+                      <h3 className="task-title">{t.title}</h3>
+                      <p className="task-desc">{t.description || ""}</p>
+                      <div className="task-meta">
+                        {(t.skills_required || []).slice(0,3).map((s, idx) => (
+                          <span key={idx} className="skill-chip">{s}</span>
+                        ))}
+                        {t.priority && <span className="priority-chip">{t.priority}</span>}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <div className="empty-icon">📋</div>
+                      <h3>Task {i + 1}</h3>
+                      <p>No recommended tasks yet</p>
+                      <span className="coming-soon">Coming Soon</span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>

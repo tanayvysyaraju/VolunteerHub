@@ -16,6 +16,7 @@ export default function Landing() {
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [wantsSlackScan, setWantsSlackScan] = useState(false);
   const [departments, setDepartments] = useState([]);
 
   const API_URL = "http://localhost:8080";
@@ -61,6 +62,21 @@ export default function Landing() {
           position: formData.position,
           erg: formData.erg
         };
+        // Optionally append suggested skills from Slack import
+        if (wantsSlackScan) {
+          try {
+            const sres = await fetch(`${API_URL}/api/skills/suggest`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ slack_source: "latest" })
+            });
+            const sdata = await sres.json().catch(() => ({}));
+            if (Array.isArray(sdata.suggested_skills) && sdata.suggested_skills.length) {
+              body.skills = sdata.suggested_skills;
+            }
+          } catch (_) {}
+        }
       } else {
         body = { email: formData.email, password: formData.password };
       }
@@ -151,6 +167,16 @@ export default function Landing() {
                       onChange={handleInputChange}
                       required
                     />
+                  </div>
+
+                  <div className="form-group inline-checkbox">
+                    <input
+                      id="slack-scan"
+                      type="checkbox"
+                      checked={wantsSlackScan}
+                      onChange={(e) => setWantsSlackScan(e.target.checked)}
+                    />
+                    <label htmlFor="slack-scan">Analyze recent Slack chats to suggest top 3 skills</label>
                   </div>
 
                   <div className="form-group">
