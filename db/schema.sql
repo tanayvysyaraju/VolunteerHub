@@ -20,12 +20,34 @@ CREATE TABLE IF NOT EXISTS organization (
   website   TEXT
 );
 
+-- ===== Departments =====
+CREATE TABLE IF NOT EXISTS department (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_department_name ON department(name);
+
+-- ===== Employee Resource Groups (ERGs) =====
+CREATE TABLE IF NOT EXISTS erg (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_erg_name ON erg(name);
+
 -- ===== Users (UUID id, merged fields) =====
 CREATE TABLE IF NOT EXISTS app_user (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email            TEXT UNIQUE NOT NULL,
   full_name        TEXT,
   organization_id  INT REFERENCES organization(id) ON DELETE SET NULL,
+  department_id    INT REFERENCES department(id) ON DELETE SET NULL,
+  erg_id           INT REFERENCES erg(id) ON DELETE SET NULL,
   password_hash    TEXT,
 
   -- Slack / profile fields
@@ -34,6 +56,7 @@ CREATE TABLE IF NOT EXISTS app_user (
   company          TEXT,
   position         TEXT,
   dept             TEXT,
+  erg              TEXT,
   location_city    TEXT,
   location_state   TEXT,
   tz               TEXT DEFAULT 'UTC',
@@ -50,6 +73,8 @@ CREATE TABLE IF NOT EXISTS app_user (
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_user_org ON app_user(organization_id);
+CREATE INDEX IF NOT EXISTS idx_app_user_department ON app_user(department_id);
+CREATE INDEX IF NOT EXISTS idx_app_user_erg ON app_user(erg_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_email ON app_user(email);
 
 -- ===== Events =====
@@ -100,6 +125,26 @@ CREATE TABLE IF NOT EXISTS user_event_match (
   computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, event_id)
 );
+
+-- ===== Event Tasks (tasks within events) =====
+CREATE TABLE IF NOT EXISTS event_task (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  skills_required TEXT[] DEFAULT '{}',
+  estimated_duration_min INT,
+  priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+  status TEXT DEFAULT 'open' CHECK (status IN ('open', 'claimed', 'in_progress', 'completed', 'cancelled')),
+  assigned_to UUID REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_task_event_id ON event_task(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_task_assigned_to ON event_task(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_event_task_status ON event_task(status);
+CREATE INDEX IF NOT EXISTS idx_event_task_skills ON event_task USING GIN (skills_required);
 
 -- ===== Micro-Tasks (from new schema, with indices) =====
 CREATE TABLE IF NOT EXISTS task (
@@ -160,6 +205,10 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_app_user_updated_at ON app_user;
 CREATE TRIGGER trg_app_user_updated_at BEFORE UPDATE ON app_user
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_event_task_updated_at ON event_task;
+CREATE TRIGGER trg_event_task_updated_at BEFORE UPDATE ON event_task
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 DROP TRIGGER IF EXISTS trg_task_updated_at ON task;

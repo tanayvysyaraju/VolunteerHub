@@ -1,5 +1,5 @@
 // src/pages/Landing.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Landing.css";
 
@@ -10,23 +10,30 @@ export default function Landing() {
     email: "",
     password: "",
     fullName: "",
-    organizationId: null,
-    userName: "",
-    company: "",
-    position: "",
     dept: "",
-    locationCity: "",
-    locationState: "",
-    tz: "UTC",
-    strengths: "",
-    interests: "",
-    expertise: "",
-    communicationStyle: ""
+    position: "",
+    erg: ""
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [departments, setDepartments] = useState([]);
 
   const API_URL = "http://localhost:8080";
+
+  useEffect(() => {
+    // Fetch departments to populate the dropdown
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/departments`, {
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => ({}));
+        setDepartments(Array.isArray(data.departments) ? data.departments : []);
+      } catch (e) {
+        setDepartments([]);
+      }
+    })();
+  }, []);
 
   const handleInputChange = (e) => {
     setFormData({
@@ -45,23 +52,14 @@ export default function Landing() {
       let body;
       
       if (isSignUp) {
-        // Map frontend field names to backend field names
+        // Minimal signup payload
         body = {
           email: formData.email,
           password: formData.password,
           full_name: formData.fullName,
-          organization_id: formData.organizationId,
-          user_name: formData.userName,
-          company: formData.company,
-          position: formData.position,
           dept: formData.dept,
-          location_city: formData.locationCity,
-          location_state: formData.locationState,
-          tz: formData.tz,
-          strengths: formData.strengths,
-          interests: formData.interests,
-          expertise: formData.expertise,
-          communication_style: formData.communicationStyle
+          position: formData.position,
+          erg: formData.erg
         };
       } else {
         body = { email: formData.email, password: formData.password };
@@ -154,27 +152,7 @@ export default function Landing() {
                       required
                     />
                   </div>
-                  
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="userName"
-                      placeholder="Username"
-                      value={formData.userName}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="company"
-                      placeholder="Company"
-                      value={formData.company}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  
+
                   <div className="form-group">
                     <input
                       type="text"
@@ -184,76 +162,51 @@ export default function Landing() {
                       onChange={handleInputChange}
                     />
                   </div>
-                  
+
                   <div className="form-group">
-                    <input
-                      type="text"
+                    <select
                       name="dept"
-                      placeholder="Department"
                       value={formData.dept}
                       onChange={handleInputChange}
-                    />
+                      required
+                    >
+                      <option value="">Select Department</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.name}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  
-                  <div className="form-row">
-                    <div className="form-group">
-                      <input
-                        type="text"
-                        name="locationCity"
-                        placeholder="City"
-                        value={formData.locationCity}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <input
-                        type="text"
-                        name="locationState"
-                        placeholder="State"
-                        value={formData.locationState}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  
+
                   <div className="form-group">
-                    <input
-                      type="text"
-                      name="strengths"
-                      placeholder="Strengths (comma-separated)"
-                      value={formData.strengths}
+                    <select
+                      name="erg"
+                      value={formData.erg}
                       onChange={handleInputChange}
-                    />
-                  </div>
-                  
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="interests"
-                      placeholder="Interests (comma-separated)"
-                      value={formData.interests}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="expertise"
-                      placeholder="Areas of Expertise (comma-separated)"
-                      value={formData.expertise}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  
-                  <div className="form-group">
-                    <input
-                      type="text"
-                      name="communicationStyle"
-                      placeholder="Communication Style"
-                      value={formData.communicationStyle}
-                      onChange={handleInputChange}
-                    />
+                    >
+                      <option value="">Select Employee Resource Group (Optional)</option>
+                      <option value="Women in Leadership / Women@">Women in Leadership / Women@</option>
+                      <option value="Black Employee Network / Black Professionals ERG">Black Employee Network / Black Professionals ERG</option>
+                      <option value="Latinx / Hispanic Heritage Network">Latinx / Hispanic Heritage Network</option>
+                      <option value="Asian Pacific Islander Network">Asian Pacific Islander Network</option>
+                      <option value="South Asian Professionals Network">South Asian Professionals Network</option>
+                      <option value="LGBTQ+ Pride Network">LGBTQ+ Pride Network</option>
+                      <option value="Veterans & Military Families Network">Veterans & Military Families Network</option>
+                      <option value="Disability & Neurodiversity Alliance">Disability & Neurodiversity Alliance</option>
+                      <option value="Parents & Caregivers ERG">Parents & Caregivers ERG</option>
+                      <option value="Young Professionals / NextGen ERG">Young Professionals / NextGen ERG</option>
+                      <option value="Multifaith / Interfaith Network">Multifaith / Interfaith Network</option>
+                      <option value="Mental Health & Wellness Network">Mental Health & Wellness Network</option>
+                      <option value="Environmental & Sustainability Group (Green Team)">Environmental & Sustainability Group (Green Team)</option>
+                      <option value="International Employees Network / Global Cultures ERG">International Employees Network / Global Cultures ERG</option>
+                      <option value="Native & Indigenous Peoples Network">Native & Indigenous Peoples Network</option>
+                      <option value="African Diaspora Network">African Diaspora Network</option>
+                      <option value="Middle Eastern & North African (MENA) ERG">Middle Eastern & North African (MENA) ERG</option>
+                      <option value="Men as Allies / Gender Equity Advocates">Men as Allies / Gender Equity Advocates</option>
+                      <option value="Volunteers & Community Impact Network">Volunteers & Community Impact Network</option>
+                      <option value="Multicultural / Diversity & Inclusion Council">Multicultural / Diversity & Inclusion Council</option>
+                    </select>
                   </div>
                 </>
               )}
@@ -303,18 +256,9 @@ export default function Landing() {
                         email: "",
                         password: "",
                         fullName: "",
-                        organizationId: null,
-                        userName: "",
-                        company: "",
-                        position: "",
                         dept: "",
-                        locationCity: "",
-                        locationState: "",
-                        tz: "UTC",
-                        strengths: "",
-                        interests: "",
-                        expertise: "",
-                        communicationStyle: ""
+                        position: "",
+                        erg: ""
                       });
                     }}
                   >

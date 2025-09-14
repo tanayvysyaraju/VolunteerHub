@@ -28,11 +28,14 @@ app.config["JWT_COOKIE_SECURE"] = False          # set True in prod (https)
 app.config["JWT_COOKIE_SAMESITE"] = "Lax"        # consider "None" + Secure for cross-site
 app.config["JWT_ACCESS_COOKIE_NAME"] = "vol_jwt"
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=6)
+app.config["JWT_COOKIE_CSRF_PROTECT"] = False    # disable CSRF for development
 
 CORS(
     app,
     resources={r"/*": {"origins": [FRONTEND_ORIGIN]}},
     supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 )
 
 jwt = JWTManager(app)
@@ -134,6 +137,7 @@ def signup():
         "company": "Optional",
         "position": "Optional", 
         "dept": "Optional",
+        "erg": "Optional",
         "location_city": "Optional",
         "location_state": "Optional",
         "tz": "Optional",
@@ -154,6 +158,7 @@ def signup():
     company = data.get("company")
     position = data.get("position")
     dept = data.get("dept")
+    erg = data.get("erg")
     location_city = data.get("location_city")
     location_state = data.get("location_state")
     tz = data.get("tz", "UTC")
@@ -161,13 +166,26 @@ def signup():
     interests = data.get("interests")
     expertise = data.get("expertise")
     communication_style = data.get("communication_style")
-
+    
     if not email or not pwd:
         return jsonify({"error": "email and password are required"}), 400
 
     pw_hash = generate_password_hash(pwd)
 
     with SessionLocal() as db:
+        # Look up department_id by department name
+        department_id = None
+        if dept:
+            dept_row = db.execute(text("SELECT id FROM department WHERE name = :dept_name"), {"dept_name": dept}).mappings().first()
+            if dept_row:
+                department_id = dept_row["id"]
+        
+        # Look up erg_id by ERG name
+        erg_id = None
+        if erg:
+            erg_row = db.execute(text("SELECT id FROM erg WHERE name = :erg_name"), {"erg_name": erg}).mappings().first()
+            if erg_row:
+                erg_id = erg_row["id"]
         existing = fetch_user_by_email(db, email)
         if existing:
             return jsonify({"error": "email already registered"}), 409
@@ -175,24 +193,24 @@ def signup():
         # Insert user with all fields
         row = db.execute(text("""
             INSERT INTO app_user (
-                email, full_name, organization_id, password_hash,
-                user_name, company, position, dept,
+                email, full_name, organization_id, department_id, erg_id, password_hash,
+                user_name, company, position, dept, erg,
                 location_city, location_state, tz,
                 strengths, interests, expertise, communication_style
             )
             VALUES (
-                :email, :full_name, :org_id, :pw,
-                :user_name, :company, :position, :dept,
+                :email, :full_name, :org_id, :department_id, :erg_id, :pw,
+                :user_name, :company, :position, :dept, :erg,
                 :location_city, :location_state, :tz,
                 :strengths, :interests, :expertise, :communication_style
             )
-            RETURNING id, email, full_name, organization_id,
-                     user_name, company, position, dept,
+            RETURNING id, email, full_name, organization_id, department_id, erg_id,
+                     user_name, company, position, dept, erg,
                      location_city, location_state, tz,
                      strengths, interests, expertise, communication_style
         """), {
-            "email": email, "full_name": full_name, "org_id": org_id, "pw": pw_hash,
-            "user_name": user_name, "company": company, "position": position, "dept": dept,
+            "email": email, "full_name": full_name, "org_id": org_id, "department_id": department_id, "erg_id": erg_id, "pw": pw_hash,
+            "user_name": user_name, "company": company, "position": position, "dept": dept, "erg": erg,
             "location_city": location_city, "location_state": location_state, "tz": tz,
             "strengths": strengths, "interests": interests, "expertise": expertise, "communication_style": communication_style
         }).mappings().first()
@@ -312,6 +330,24 @@ def list_organizations():
         rows = db.execute(text("SELECT id, name, website FROM organization ORDER BY name")).mappings().all()
     return jsonify({"organizations": [dict(r) for r in rows]}), 200
 
+@app.post("/api/organizations")
+@jwt_required()
+def create_organization():
+    """Create a new organization for testing"""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "Test Organization")
+    website = data.get("website", "https://test.org")
+    
+    with SessionLocal() as db:
+        result = db.execute(text("""
+            INSERT INTO organization (name, website)
+            VALUES (:name, :website)
+            RETURNING id, name, website
+        """), {"name": name, "website": website}).mappings().first()
+        db.commit()
+    
+    return jsonify({"organization": dict(result)}), 201
+
 
 # -------------------------
 # Create Event (+ optional sessions)
@@ -345,7 +381,7 @@ def create_event():
     data = request.get_json(silent=True) or {}
 
     # Required
-    err = _require_fields(data, ["organization_id", "title", "description", "mode"])
+    err = _require_fields(data, ["title", "description", "mode"])
     if err:
         return jsonify({"error": err}), 400
 
@@ -380,10 +416,12 @@ def create_event():
         return jsonify({"error": f"invalid session timestamp format: {e}"}), 400
 
     with SessionLocal() as db:
-        # Check org
-        org = db.execute(text("SELECT id FROM organization WHERE id = :id"), {"id": data["organization_id"]}).first()
-        if not org:
-            return jsonify({"error": "organization_id not found"}), 400
+        # Check org if provided
+        organization_id = data.get("organization_id")
+        if organization_id:
+            org = db.execute(text("SELECT id FROM organization WHERE id = :id"), {"id": organization_id}).first()
+            if not org:
+                return jsonify({"error": "organization_id not found"}), 400
 
         # Insert event
         ev = db.execute(text("""
@@ -404,7 +442,7 @@ def create_event():
                       is_remote, causes, skills_needed, accessibility, tags,
                       min_duration_min, rsvp_url, contact_email, created_at, updated_at
         """), {
-            "organization_id": data["organization_id"],
+            "organization_id": organization_id,
             "title": data["title"].strip(),
             "description": data["description"].strip(),
             "mode": mode,
@@ -425,11 +463,28 @@ def create_event():
         # Insert sessions
         created_sessions = []
         for s in norm_sessions:
+            # Convert empty capacity to None
+            capacity = s.get("capacity")
+            if capacity == "" or capacity is None:
+                capacity = None
+            else:
+                try:
+                    capacity = int(capacity)
+                except (ValueError, TypeError):
+                    capacity = None
+            
             row = db.execute(text("""
                 INSERT INTO event_session (event_id, start_ts, end_ts, capacity, meet_url, address_line)
                 VALUES (:event_id, :start_ts, :end_ts, :capacity, :meet_url, :address_line)
                 RETURNING id, event_id, start_ts, end_ts, capacity, meet_url, address_line
-            """), {"event_id": ev["id"], **s}).mappings().first()
+            """), {
+                "event_id": ev["id"], 
+                "start_ts": s["start_ts"],
+                "end_ts": s["end_ts"],
+                "capacity": capacity,
+                "meet_url": s.get("meet_url") or None,
+                "address_line": s.get("address_line") or None
+            }).mappings().first()
             created_sessions.append(dict(row))
 
         db.commit()
@@ -441,6 +496,34 @@ def create_event():
 
     return jsonify({"event": dict(ev), "sessions": created_sessions}), 201
 
+
+# -------------------------
+# List Departments
+# -------------------------
+@app.get("/api/departments")
+def list_departments():
+    """Get all available departments"""
+    with SessionLocal() as db:
+        rows = db.execute(text("""
+            SELECT id, name, description
+            FROM department
+            ORDER BY name
+        """)).mappings().all()
+    return jsonify({"departments": [dict(r) for r in rows]}), 200
+
+# -------------------------
+# List ERGs
+# -------------------------
+@app.get("/api/ergs")
+def list_ergs():
+    """Get all available Employee Resource Groups"""
+    with SessionLocal() as db:
+        rows = db.execute(text("""
+            SELECT id, name, description
+            FROM erg
+            ORDER BY name
+        """)).mappings().all()
+    return jsonify({"ergs": [dict(r) for r in rows]}), 200
 
 # -------------------------
 # List Events (for admin/review)
@@ -458,6 +541,156 @@ def list_events():
             ORDER BY created_at DESC
         """)).mappings().all()
     return jsonify({"events": [dict(r) for r in rows]}), 200
+
+# -------------------------
+# Task Management Endpoints
+# -------------------------
+@app.post("/api/events/<uuid:event_id>/tasks")
+@jwt_required()
+def create_event_task(event_id):
+    """Create a new task for an event"""
+    data = request.get_json()
+    _require_fields(data, ["title"])
+    
+    with SessionLocal() as db:
+        # Check if event exists
+        event = db.execute(text("SELECT id FROM event WHERE id = :event_id"), {"event_id": event_id}).mappings().first()
+        if not event:
+            return jsonify({"error": "Event not found"}), 404
+        
+        # Create task
+        task = db.execute(text("""
+            INSERT INTO event_task (event_id, title, description, skills_required, estimated_duration_min, priority, status)
+            VALUES (:event_id, :title, :description, :skills_required, :estimated_duration_min, :priority, :status)
+            RETURNING id, event_id, title, description, skills_required, estimated_duration_min, priority, status, assigned_to, created_at, updated_at
+        """), {
+            "event_id": event_id,
+            "title": data["title"],
+            "description": data.get("description", ""),
+            "skills_required": _as_list(data.get("skills_required", "")),
+            "estimated_duration_min": data.get("estimated_duration_min"),
+            "priority": data.get("priority", "medium"),
+            "status": data.get("status", "open")
+        }).mappings().first()
+        
+        db.commit()
+        return jsonify({"task": dict(task)}), 201
+
+@app.get("/api/events/<uuid:event_id>/tasks")
+@jwt_required()
+def get_event_tasks(event_id):
+    """Get all tasks for an event"""
+    with SessionLocal() as db:
+        tasks = db.execute(text("""
+            SELECT id, event_id, title, description, skills_required, estimated_duration_min, 
+                   priority, status, assigned_to, created_at, updated_at
+            FROM event_task 
+            WHERE event_id = :event_id
+            ORDER BY created_at DESC
+        """), {"event_id": event_id}).mappings().all()
+        
+        return jsonify({"tasks": [dict(t) for t in tasks]}), 200
+
+@app.get("/api/tasks/recommended")
+@jwt_required()
+def get_recommended_event_tasks():
+    """Get recommended tasks for the user based on their skills and interests"""
+    user_id = get_jwt_identity()
+    
+    with SessionLocal() as db:
+        # Get user's skills and interests
+        user = db.execute(text("""
+            SELECT interests, strengths, expertise
+            FROM app_user 
+            WHERE id = :user_id
+        """), {"user_id": user_id}).mappings().first()
+        
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # For now, return empty data - later this will use AI matching
+        return jsonify({
+            "tasks": [],
+            "message": "No recommended tasks available yet. AI matching will be implemented soon."
+        }), 200
+
+@app.put("/api/tasks/<uuid:task_id>/assign")
+@jwt_required()
+def assign_task(task_id):
+    """Assign a task to the current user"""
+    user_id = get_jwt_identity()
+    
+    with SessionLocal() as db:
+        # Check if task exists and is available
+        task = db.execute(text("""
+            SELECT id, status, assigned_to FROM event_task WHERE id = :task_id
+        """), {"task_id": task_id}).mappings().first()
+        
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        if task["status"] != "open":
+            return jsonify({"error": "Task is not available for assignment"}), 400
+        
+        # Assign task to user
+        db.execute(text("""
+            UPDATE event_task 
+            SET assigned_to = :user_id, status = 'claimed', updated_at = now()
+            WHERE id = :task_id
+        """), {"user_id": user_id, "task_id": task_id})
+        
+        db.commit()
+        return jsonify({"message": "Task assigned successfully"}), 200
+
+@app.get("/api/tasks/my-tasks")
+@jwt_required()
+def get_my_tasks():
+    """Get tasks assigned to the current user"""
+    user_id = get_jwt_identity()
+    
+    with SessionLocal() as db:
+        tasks = db.execute(text("""
+            SELECT et.id, et.event_id, et.title, et.description, et.skills_required, 
+                   et.estimated_duration_min, et.priority, et.status, et.created_at, et.updated_at,
+                   e.title as event_title
+            FROM event_task et
+            JOIN event e ON et.event_id = e.id
+            WHERE et.assigned_to = :user_id
+            ORDER BY et.created_at DESC
+        """), {"user_id": user_id}).mappings().all()
+        
+        return jsonify({"tasks": [dict(t) for t in tasks]}), 200
+
+@app.put("/api/tasks/<uuid:task_id>/complete")
+@jwt_required()
+def complete_task(task_id):
+    """Mark a task as completed"""
+    user_id = get_jwt_identity()
+    
+    with SessionLocal() as db:
+        # Check if task is assigned to user
+        task = db.execute(text("""
+            SELECT id, assigned_to, status FROM event_task WHERE id = :task_id
+        """), {"task_id": task_id}).mappings().first()
+        
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        if str(task["assigned_to"]) != str(user_id):
+            return jsonify({"error": "Task is not assigned to you"}), 403
+        
+        if task["status"] not in ["claimed", "in_progress"]:
+            return jsonify({"error": "Task cannot be completed in current status"}), 400
+        
+        # Mark task as completed
+        db.execute(text("""
+            UPDATE event_task 
+            SET status = 'completed', updated_at = now()
+            WHERE id = :task_id
+        """), {"task_id": task_id})
+        
+        db.commit()
+        return jsonify({"message": "Task completed successfully"}), 200
 
 # -------------------------
 # Home Page Endpoints

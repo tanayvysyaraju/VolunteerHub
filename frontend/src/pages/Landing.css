@@ -153,6 +153,33 @@
   color: #9ca3af;
 }
 
+.form-group select {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  background: #fafafa;
+  color: #1a202c;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.form-group select:focus {
+  outline: none;
+  border-color: #1a202c;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(26, 32, 44, 0.1);
+}
+
+.form-group select option {
+  padding: 0.5rem;
+  background: white;
+  color: #1a202c;
+}
+
 .submit-btn {
   width: 100%;
   padding: 0.875rem 1rem;

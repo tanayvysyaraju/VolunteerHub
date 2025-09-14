@@ -1,12 +1,11 @@
 // src/pages/CreateEvent.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import "./CreateEvent.css";
 
 const API_URL = "http://localhost:8080";
 
-export default function CreateEvent({ user }) {
+export default function CreateEvent() {
   const [formData, setFormData] = useState({
-    organization_id: "",
     title: "",
     description: "",
     mode: "in_person",
@@ -25,26 +24,9 @@ export default function CreateEvent({ user }) {
     sessions: []
   });
 
-  const [organizations, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  useEffect(() => {
-    fetchOrganizations();
-  }, []);
-
-  const fetchOrganizations = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/organizations`, {
-        credentials: "include"
-      });
-      const data = await response.json();
-      setOrganizations(data.organizations || []);
-    } catch (error) {
-      console.error("Error fetching organizations:", error);
-    }
-  };
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -57,13 +39,10 @@ export default function CreateEvent({ user }) {
   const addSession = () => {
     setFormData(prev => ({
       ...prev,
-      sessions: [...prev.sessions, {
-        start_ts: "",
-        end_ts: "",
-        capacity: "",
-        meet_url: "",
-        address_line: ""
-      }]
+      sessions: [
+        ...prev.sessions,
+        { start_ts: "", end_ts: "", capacity: "", meet_url: "", address_line: "" }
+      ]
     }));
   };
 
@@ -77,9 +56,7 @@ export default function CreateEvent({ user }) {
   const updateSession = (index, field, value) => {
     setFormData(prev => ({
       ...prev,
-      sessions: prev.sessions.map((session, i) => 
-        i === index ? { ...session, [field]: value } : session
-      )
+      sessions: prev.sessions.map((s, i) => (i === index ? { ...s, [field]: value } : s))
     }));
   };
 
@@ -89,58 +66,49 @@ export default function CreateEvent({ user }) {
     setError("");
     setSuccess("");
 
-    try {
-      // Convert comma-separated strings to arrays
-      const submitData = {
-        ...formData,
-        organization_id: parseInt(formData.organization_id),
-        location_lat: formData.location_lat ? parseFloat(formData.location_lat) : null,
-        location_lng: formData.location_lng ? parseFloat(formData.location_lng) : null,
-        causes: formData.causes.split(",").map(item => item.trim()).filter(item => item),
-        skills_needed: formData.skills_needed.split(",").map(item => item.trim()).filter(item => item),
-        accessibility: formData.accessibility.split(",").map(item => item.trim()).filter(item => item),
-        tags: formData.tags.split(",").map(item => item.trim()).filter(item => item)
-      };
+      try {
+        const submitData = {
+          ...formData,
+          location_lat: formData.location_lat ? parseFloat(formData.location_lat) : null,
+          location_lng: formData.location_lng ? parseFloat(formData.location_lng) : null,
+          causes: formData.causes.split(",").map(x => x.trim()).filter(Boolean),
+          skills_needed: formData.skills_needed.split(",").map(x => x.trim()).filter(Boolean),
+          accessibility: formData.accessibility.split(",").map(x => x.trim()).filter(Boolean),
+          tags: formData.tags.split(",").map(x => x.trim()).filter(Boolean)
+        };
 
-      const response = await fetch(`${API_URL}/api/events`, {
+      const res = await fetch(`${API_URL}/api/events`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(submitData)
       });
 
-      const data = await response.json();
+      const data = await res.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create event");
-      }
+      if (!res.ok) throw new Error(data.error || "Failed to create event");
 
-      setSuccess("Event created successfully!");
-      // Reset form
-      setFormData({
-        organization_id: "",
-        title: "",
-        description: "",
-        mode: "in_person",
-        location_city: "",
-        location_state: "",
-        location_lat: "",
-        location_lng: "",
-        is_remote: false,
-        causes: "",
-        skills_needed: "",
-        accessibility: "",
-        tags: "",
-        min_duration_min: 60,
-        rsvp_url: "",
-        contact_email: "",
-        sessions: []
-      });
-
-    } catch (error) {
-      setError(error.message);
+        setSuccess("Event created successfully!");
+        setFormData({
+          title: "",
+          description: "",
+          mode: "in_person",
+          location_city: "",
+          location_state: "",
+          location_lat: "",
+          location_lng: "",
+          is_remote: false,
+          causes: "",
+          skills_needed: "",
+          accessibility: "",
+          tags: "",
+          min_duration_min: 60,
+          rsvp_url: "",
+          contact_email: "",
+          sessions: []
+        });
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -151,7 +119,7 @@ export default function CreateEvent({ user }) {
       <div className="event-container">
         <header className="event-header">
           <h1>Create New Event</h1>
-          <p>Set up a volunteer event for your organization</p>
+          <p>Set up a volunteer event</p>
         </header>
 
         {error && <div className="error-message">{error}</div>}
@@ -161,24 +129,6 @@ export default function CreateEvent({ user }) {
           {/* Basic Information */}
           <div className="form-section">
             <h2>Basic Information</h2>
-            
-            <div className="form-group">
-              <label htmlFor="organization_id">Organization *</label>
-              <select
-                id="organization_id"
-                name="organization_id"
-                value={formData.organization_id}
-                onChange={handleInputChange}
-                required
-              >
-                <option value="">Select an organization</option>
-                {organizations.map(org => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-            </div>
 
             <div className="form-group">
               <label htmlFor="title">Event Title *</label>
@@ -225,7 +175,7 @@ export default function CreateEvent({ user }) {
           {/* Location Information */}
           <div className="form-section">
             <h2>Location Information</h2>
-            
+
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="location_city">City</label>
@@ -294,7 +244,7 @@ export default function CreateEvent({ user }) {
           {/* Event Details */}
           <div className="form-section">
             <h2>Event Details</h2>
-            
+
             <div className="form-group">
               <label htmlFor="causes">Causes (comma-separated)</label>
               <input
@@ -384,7 +334,7 @@ export default function CreateEvent({ user }) {
           <div className="form-section">
             <h2>Event Sessions (Optional)</h2>
             <p>Add specific time slots for your event</p>
-            
+
             {formData.sessions.map((session, index) => (
               <div key={index} className="session-card">
                 <h3>Session {index + 1}</h3>
@@ -435,32 +385,20 @@ export default function CreateEvent({ user }) {
                     placeholder="123 Main St, City, State"
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeSession(index)}
-                  className="remove-session-btn"
-                >
+                <button type="button" onClick={() => removeSession(index)} className="remove-session-btn">
                   Remove Session
                 </button>
               </div>
             ))}
-            
-            <button
-              type="button"
-              onClick={addSession}
-              className="add-session-btn"
-            >
+
+            <button type="button" onClick={addSession} className="add-session-btn">
               + Add Session
             </button>
           </div>
 
-          {/* Submit Button */}
+          {/* Submit */}
           <div className="form-actions">
-            <button
-              type="submit"
-              disabled={loading}
-              className="submit-btn"
-            >
+            <button type="submit" disabled={loading} className="submit-btn">
               {loading ? "Creating Event..." : "Create Event"}
             </button>
           </div>
