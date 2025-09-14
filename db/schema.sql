@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS app_user (
   expertise           TEXT,
   communication_style TEXT,
 
+  -- Skills array for matching and profiles
+  skills            TEXT[] DEFAULT '{}',
+
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -75,6 +78,7 @@ CREATE TABLE IF NOT EXISTS app_user (
 CREATE INDEX IF NOT EXISTS idx_app_user_org ON app_user(organization_id);
 CREATE INDEX IF NOT EXISTS idx_app_user_department ON app_user(department_id);
 CREATE INDEX IF NOT EXISTS idx_app_user_erg ON app_user(erg_id);
+CREATE INDEX IF NOT EXISTS idx_app_user_skills_gin ON app_user USING GIN (skills);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_email ON app_user(email);
 
 -- ===== Events =====

@@ -67,6 +67,7 @@ def fetch_user_by_email(db, email):
                slack_id, user_name, company, position, dept,
                location_city, location_state, tz,
                raw_conversations, strengths, interests, expertise, communication_style,
+               skills,
                created_at, updated_at
         FROM app_user WHERE email = :email
     """), {"email": email}).mappings().first()
@@ -78,6 +79,7 @@ def fetch_user_by_id(db, user_id):
                slack_id, user_name, company, position, dept,
                location_city, location_state, tz,
                raw_conversations, strengths, interests, expertise, communication_style,
+               skills,
                created_at, updated_at
         FROM app_user WHERE id = :id
     """), {"id": user_id}).mappings().first()
@@ -165,6 +167,7 @@ def signup():
     strengths = data.get("strengths")
     interests = data.get("interests")
     expertise = data.get("expertise")
+    skills = data.get("skills")  # accept list or comma-separated
     communication_style = data.get("communication_style")
     
     if not email or not pwd:
@@ -196,23 +199,24 @@ def signup():
                 email, full_name, organization_id, department_id, erg_id, password_hash,
                 user_name, company, position, dept, erg,
                 location_city, location_state, tz,
-                strengths, interests, expertise, communication_style
+                strengths, interests, expertise, communication_style, skills
             )
             VALUES (
                 :email, :full_name, :org_id, :department_id, :erg_id, :pw,
                 :user_name, :company, :position, :dept, :erg,
                 :location_city, :location_state, :tz,
-                :strengths, :interests, :expertise, :communication_style
+                :strengths, :interests, :expertise, :communication_style, :skills
             )
             RETURNING id, email, full_name, organization_id, department_id, erg_id,
                      user_name, company, position, dept, erg,
                      location_city, location_state, tz,
-                     strengths, interests, expertise, communication_style
+                     strengths, interests, expertise, communication_style, skills
         """), {
             "email": email, "full_name": full_name, "org_id": org_id, "department_id": department_id, "erg_id": erg_id, "pw": pw_hash,
             "user_name": user_name, "company": company, "position": position, "dept": dept, "erg": erg,
             "location_city": location_city, "location_state": location_state, "tz": tz,
-            "strengths": strengths, "interests": interests, "expertise": expertise, "communication_style": communication_style
+            "strengths": strengths, "interests": interests, "expertise": expertise, "communication_style": communication_style,
+            "skills": _as_list(skills)
         }).mappings().first()
         db.commit()
 
@@ -234,7 +238,8 @@ def signup():
                 "strengths": row["strengths"],
                 "interests": row["interests"],
                 "expertise": row["expertise"],
-                "communication_style": row["communication_style"]
+                "communication_style": row["communication_style"],
+                "skills": row.get("skills")
             }
         })
         set_access_cookies(resp, access_token)
@@ -274,7 +279,8 @@ def login():
                 "strengths": user["strengths"],
                 "interests": user["interests"],
                 "expertise": user["expertise"],
-                "communication_style": user["communication_style"]
+                "communication_style": user["communication_style"],
+                "skills": user.get("skills")
             }
         })
         set_access_cookies(resp, access_token)
@@ -310,7 +316,8 @@ def me():
                 "strengths": user["strengths"],
                 "interests": user["interests"],
                 "expertise": user["expertise"],
-                "communication_style": user["communication_style"]
+                "communication_style": user["communication_style"],
+                "skills": user.get("skills")
             }
         }, 200
 
