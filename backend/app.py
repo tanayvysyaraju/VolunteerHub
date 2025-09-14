@@ -12,6 +12,7 @@ from flask_jwt_extended import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv, find_dotenv
+import random
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -694,6 +695,9 @@ def call_gemini_for_skills(source_text: str) -> list:
         "Rules:\n"
         "- Only return skills from SKILL_VOCAB.\n"
         "- Return exactly 3 skills, best matching the text.\n"
+        "- Prefer varied, specific skills that are clearly tied to the task context.\n"
+        "- Avoid generic repeats (e.g., Leadership, Communication, Project Management) unless strongly justified by the text.\n"
+        "- Diversify selections across similar tasks when reasonable.\n"
         "- Output must be valid JSON, no markdown, no extra commentary.\n"
     )
 
@@ -750,7 +754,26 @@ def call_gemini_for_skills(source_text: str) -> list:
         if s not in seen and s in SKILL_VOCAB:
             seen.add(s)
             dedup.append(s)
-    return dedup[:3]
+    # Ensure exactly 3 skills, pad using text-based ranking then vocab
+    chosen = dedup[:3]
+    if len(chosen) < 3:
+        lc = f" { (source_text or '').lower() } "
+        counts = Counter()
+        for kw, skill in KEYWORD_TO_SKILL.items():
+            if kw in lc and skill in SKILL_VOCAB and skill not in chosen:
+                counts[skill] += lc.count(kw)
+        ranked = [s for s, _ in counts.most_common() if s not in chosen]
+        for s in ranked:
+            if len(chosen) >= 3:
+                break
+            chosen.append(s)
+        if len(chosen) < 3:
+            for s in SKILL_VOCAB:
+                if s not in chosen:
+                    chosen.append(s)
+                if len(chosen) >= 3:
+                    break
+    return chosen[:3]
 
 
 def call_gemini_for_subtasks(source_text: str) -> list[dict]:
@@ -1419,11 +1442,284 @@ def get_communities():
                     user_communities.append({"name": c["name"], "rank": c["rank"]})
                     break
 
+    # Only show top 10 entries on the user view
+    combined_top = combined[:10]
     return jsonify({
         "user_communities": user_communities,
-        "leaderboard": [{"name": c["name"], "score": c["score"]} for c in combined]
+        "leaderboard": [{"name": c["name"], "score": c["score"]} for c in combined_top]
     }), 200
 
+# -------------------------
+# Admin: Backfill/normalize task skills to exactly three per task
+# -------------------------
+@app.post("/api/admin/backfill-task-skills")
+@jwt_required()
+def backfill_task_skills():
+    """Ensure every event_task has exactly three skills_required.
+
+    Optional query param: rerun_all=true to recompute for all tasks; otherwise
+    only tasks with < 3 skills are processed.
+    """
+    from flask import request as _rq
+    rerun_all = (_rq.args.get("rerun_all") == "true")
+
+    with SessionLocal() as db:
+        if rerun_all:
+            rows = db.execute(text(
+                """
+                SELECT id, title, description FROM event_task
+                """
+            )).mappings().all()
+        else:
+            rows = db.execute(text(
+                """
+                SELECT id, title, description, COALESCE(array_length(skills_required,1),0) AS n
+                FROM event_task
+                WHERE COALESCE(array_length(skills_required,1),0) < 3
+                """
+            )).mappings().all()
+
+        updated = 0
+        for r in rows:
+            text_src = f"{r.get('title') or ''}. {r.get('description') or ''}"
+            skills: list[str] = []
+            try:
+                if GEMINI_API_KEY:
+                    skills = call_gemini_for_skills(text_src) or []
+            except Exception:
+                skills = []
+            if not skills:
+                # fallback keyword matcher
+                lc = f" {text_src.lower()} "
+                counts = Counter()
+                for kw, skill in KEYWORD_TO_SKILL.items():
+                    if kw in lc and skill in SKILL_VOCAB:
+                        counts[skill] += lc.count(kw)
+                skills = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
+            # enforce exactly three
+            if len(skills) < 3:
+                lc = f" {text_src.lower()} "
+                counts = Counter()
+                for kw, skill in KEYWORD_TO_SKILL.items():
+                    if kw in lc and skill in SKILL_VOCAB and skill not in skills:
+                        counts[skill] += lc.count(kw)
+                ranked = [s for s, _ in counts.most_common() if s not in skills]
+                for s in ranked:
+                    if len(skills) >= 3:
+                        break
+                    skills.append(s)
+                if len(skills) < 3:
+                    for s in SKILL_VOCAB:
+                        if s not in skills:
+                            skills.append(s)
+                        if len(skills) >= 3:
+                            break
+            skills = skills[:3]
+
+            db.execute(text(
+                "UPDATE event_task SET skills_required=:skills, updated_at=now() WHERE id=:id"
+            ), {"skills": skills, "id": r["id"]})
+            updated += 1
+
+        db.commit()
+    return jsonify({"updated": updated}), 200
+# -------------------------
+# Admin: Reset and seed events and LLM subtasks
+# -------------------------
+@app.post("/api/admin/reset_and_seed_events")
+@jwt_required()
+def reset_and_seed_events():
+    """Deletes all existing event_task rows, creates events from payload, and
+    generates LLM subtasks for each event.
+
+    Body: { events: [ { task, description, skill1, skill2, skill3, start_ts, end_ts, mode } ] }
+    """
+    data = request.get_json(silent=True) or {}
+    items = data.get("events") or []
+    if not isinstance(items, list):
+        return jsonify({"error": "events must be an array"}), 400
+
+    def map_mode(m):
+        if not m:
+            return "virtual"
+        m = str(m).lower()
+        return "virtual" if m in ("remote", "virtual") else ("in_person" if m == "in_person" else "hybrid")
+
+    created = []
+    with SessionLocal() as db:
+        # Delete all existing subtasks only
+        db.execute(text("DELETE FROM event_task"))
+        db.commit()
+
+        for it in items:
+            title = (it.get("task") or "Event").strip()
+            desc = it.get("description") or ""
+            s1, s2, s3 = it.get("skill1"), it.get("skill2"), it.get("skill3")
+            start_ts = it.get("start_ts")
+            end_ts = it.get("end_ts")
+            mode = map_mode(it.get("mode"))
+            skills_seed = [s for s in [s1, s2, s3] if s]
+
+            # Insert event (with minimal required arrays)
+            ev = db.execute(text("""
+                INSERT INTO event (organization_id, title, description, mode,
+                                   location_city, location_state, is_remote,
+                                   causes, skills_needed, tags, min_duration_min, rsvp_url, contact_email)
+                VALUES (NULL, :title, :description, :mode,
+                        NULL, NULL, :is_remote,
+                        :causes, :skills_needed, '{}', 60, NULL, NULL)
+                RETURNING id, title
+            """), {
+                "title": title,
+                "description": desc,
+                "mode": mode,
+                "is_remote": True if mode == "virtual" else False,
+                "causes": [],
+                "skills_needed": skills_seed or []
+            }).mappings().first()
+
+            # Generate LLM subtasks
+            try:
+                subtasks = call_gemini_for_subtasks(f"{title}\n\n{desc}") or []
+            except Exception:
+                subtasks = []
+            if not subtasks:
+                subtasks = [{"title": title[:120], "description": desc[:280]}]
+
+            for st in subtasks:
+                # infer skills per subtask
+                inferred = []
+                try:
+                    inferred = call_gemini_for_skills(f"{st.get('title','')}. {st.get('description','')}") or []
+                except Exception:
+                    inferred = []
+                if not inferred:
+                    lc = f" {st.get('title','').lower()} {st.get('description','').lower()} "
+                    counts = Counter()
+                    for kw, skill in KEYWORD_TO_SKILL.items():
+                        if kw in lc:
+                            counts[skill] += lc.count(kw)
+                    inferred = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
+
+                db.execute(text("""
+                    INSERT INTO event_task (event_id, title, description, skills_required, priority, status, start_ts, end_ts)
+                    VALUES (:event_id, :title, :description, :skills_required, 'medium', 'open', :start_ts, :end_ts)
+                """), {
+                    "event_id": ev["id"],
+                    "title": st.get("title") or "Task",
+                    "description": st.get("description") or "",
+                    "skills_required": inferred,
+                    "start_ts": start_ts,
+                    "end_ts": end_ts
+                })
+            db.commit()
+            created.append({"event_id": str(ev["id"]), "title": ev["title"], "subtasks": len(subtasks)})
+
+    return jsonify({"seeded": len(created), "events": created}), 200
+
+
+# -------------------------
+# Admin: Seed leaderboard with fake users/registrations (for demo)
+# -------------------------
+@app.post("/api/admin/seed_leaderboard")
+@jwt_required()
+def seed_leaderboard():
+    """Create a synthetic event/task and add fake users with registrations
+    to generate leaderboard points for departments and ERGs. Only shows top 10
+    in the user view.
+
+    Body (optional): { per_group_min?: int, per_group_max?: int }
+    """
+    data = request.get_json(silent=True) or {}
+    per_min = int(data.get("per_group_min", 3))
+    per_max = int(data.get("per_group_max", 12))
+    if per_min < 1: per_min = 1
+    if per_max < per_min: per_max = per_min
+
+    with SessionLocal() as db:
+        # Ensure synthetic event/task exists
+        ev = db.execute(text(
+            "SELECT id FROM event WHERE title = :t"
+        ), {"t": "Synthetic Leaderboard Seed Event"}).mappings().first()
+        if not ev:
+            ev = db.execute(text(
+                """
+                INSERT INTO event (organization_id, title, description, mode, causes, skills_needed, tags)
+                VALUES (NULL, :title, :desc, 'virtual', '{}', '{demo}', '{}')
+                RETURNING id
+                """
+            ), {"title": "Synthetic Leaderboard Seed Event", "desc": "Synthetic event for leaderboard seeding"}).mappings().first()
+        task = db.execute(text(
+            "SELECT id FROM event_task WHERE event_id = :eid AND title = :tt"
+        ), {"eid": ev["id"], "tt": "Synthetic Leaderboard Seed Task"}).mappings().first()
+        if not task:
+            task = db.execute(text(
+                """
+                INSERT INTO event_task (event_id, title, description, skills_required, priority, status)
+                VALUES (:eid, :title, 'Synthetic task for seeding', '{seed,points,demo}', 'medium', 'open')
+                RETURNING id
+                """
+            ), {"eid": ev["id"], "title": "Synthetic Leaderboard Seed Task"}).mappings().first()
+
+        # Helper to create a fake user and register once
+        def create_user_and_register(dept_id=None, dept_name=None, erg_id=None, erg_name=None):
+            email = f"seed_{random.randint(10_000_000,99_999_999)}@example.com"
+            full_name = f"Seed User {random.randint(1000,9999)}"
+            row = db.execute(text(
+                """
+                INSERT INTO app_user (email, full_name, department_id, dept, erg_id, erg)
+                VALUES (:email, :full_name, :department_id, :dept, :erg_id, :erg)
+                RETURNING id
+                """
+            ), {
+                "email": email,
+                "full_name": full_name,
+                "department_id": dept_id,
+                "dept": dept_name,
+                "erg_id": erg_id,
+                "erg": erg_name
+            }).first()
+            if row and row[0]:
+                db.execute(text(
+                    "INSERT INTO user_task_registration (user_id, task_id) VALUES (:uid, :tid) ON CONFLICT DO NOTHING"
+                ), {"uid": row[0], "tid": task["id"]})
+
+        # Departments
+        depts = db.execute(text("SELECT id, name FROM department ORDER BY name" )).mappings().all()
+        for d in depts:
+            count = random.randint(per_min, per_max)
+            for _ in range(count):
+                create_user_and_register(dept_id=d["id"], dept_name=d["name"], erg_id=None, erg_name=None)
+
+        # ERGs
+        ergs = db.execute(text("SELECT id, name FROM erg ORDER BY name" )).mappings().all()
+        for e in ergs:
+            count = random.randint(per_min, per_max)
+            for _ in range(count):
+                create_user_and_register(dept_id=None, dept_name=None, erg_id=e["id"], erg_name=e["name"]) 
+
+        db.commit()
+
+        # Return top 10 combined snapshot
+        rows = db.execute(text(
+            """
+            SELECT 'Dept: '||d.name AS name, COALESCE(COUNT(utr.user_id),0) AS score
+            FROM department d
+            LEFT JOIN app_user au ON au.department_id = d.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY d.name
+            UNION ALL
+            SELECT 'ERG: '||e.name AS name, COALESCE(COUNT(utr.user_id),0) AS score
+            FROM erg e
+            LEFT JOIN app_user au ON au.erg_id = e.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY e.name
+            ORDER BY score DESC, name ASC
+            LIMIT 10
+            """
+        )).mappings().all()
+
+    return jsonify({"seeded_departments": len(depts), "seeded_ergs": len(ergs), "top10": [{"name": r["name"], "score": int(r["score"] or 0)} for r in rows]}), 200
 # -------------------------
 # Company Analytics Endpoints
 # -------------------------

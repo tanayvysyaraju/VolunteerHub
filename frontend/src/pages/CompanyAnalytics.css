@@ -1,7 +1,7 @@
 /* Company Analytics Styles */
 .company-analytics {
   min-height: 100vh;
-  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   color: #1a202c;
 }
@@ -33,7 +33,7 @@
 
 /* Header */
 .analytics-header {
-  background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+  background: linear-gradient(135deg, #0b0b0b 0%, #1a1a1a 100%);
   color: white;
   padding: 3rem 2rem;
   text-align: center;
@@ -43,7 +43,7 @@
   font-size: 2.5rem;
   font-weight: 600;
   margin: 0 0 0.5rem 0;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
 }
 
 .header-content p {
@@ -78,26 +78,26 @@
   gap: 0.5rem;
   padding: 0.75rem 1.5rem;
   border: 1px solid #e2e8f0;
-  background: white;
+  background: #ffffff;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
   font-weight: 500;
-  color: #4a5568;
+  color: #111111;
   white-space: nowrap;
   font-size: 0.875rem;
 }
 
 .nav-tab:hover {
-  background: #f7fafc;
-  border-color: #cbd5e0;
-  color: #2d3748;
+  background: #f8fafc;
+  border-color: #d1d5db;
+  color: #111111;
 }
 
 .nav-tab.active {
-  background: #1a202c;
-  border-color: #1a202c;
-  color: white;
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
 }
 
 .tab-icon {
@@ -166,7 +166,7 @@
 .metric-value {
   font-size: 2rem;
   font-weight: 600;
-  color: #1a202c;
+  color: #111111;
   line-height: 1;
   letter-spacing: -0.025em;
 }
@@ -294,7 +294,7 @@
 .skill-value {
   font-size: 2rem;
   font-weight: 600;
-  color: #1a202c;
+  color: #111111;
   letter-spacing: -0.025em;
 }
 
@@ -341,7 +341,7 @@
 .impact-value {
   font-size: 1.5rem;
   font-weight: 600;
-  color: #1a202c;
+  color: #111111;
   letter-spacing: -0.025em;
 }
 
@@ -434,7 +434,7 @@
 .progress-bar {
   width: 100%;
   height: 12px;
-  background: #e2e8f0;
+  background: #ebedf0;
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 0.75rem;
@@ -442,7 +442,7 @@
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+  background: linear-gradient(90deg, #111111, #1f2937);
   transition: width 0.3s ease;
 }
 
@@ -666,4 +666,18 @@
   .cause-name {
     min-width: 100px;
   }
+}
+
+/* Larger, crisper titles */
+.header-content h1 { font-size: 2.5rem; letter-spacing: -0.03em; }
+.chart-card h3, .engagement-card h3, .impact-card h3, .progress-card h3, .leaderboard-card h3, .trends-card h3 {
+  font-size: 1.2rem;
+}
+
+/* Focus styles for keyboard nav */
+.nav-tab:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(17,17,17,0.25); }
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .participation-bar .bar-fill, .cause-fill, .progress-fill { transition: none; }
 }

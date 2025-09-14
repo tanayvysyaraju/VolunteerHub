@@ -112,8 +112,9 @@ export default function Home({ user }) {
                         {t.end_ts && <span> · End: {new Date(t.end_ts).toLocaleString()}</span>}
                       </div>
                       <div className="task-meta">
-                        {(() => { const skills = (t.skills_required || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
-                        {t.priority && <span className="priority-chip">{t.priority}</span>}
+                        {(t.skills_required || []).slice(0,3).map((s, idx) => (
+                          <span key={idx} className="skill-chip">{s}</span>
+                        ))}
                       </div>
                       <div className="task-actions">
                         <button
@@ -178,10 +179,9 @@ export default function Home({ user }) {
                       </div>
                       <div className="task-meta">
                         {e.mode && <span className="priority-chip">{e.mode}</span>}
-                        {(e.location_city || e.location_state) && (
-                          <span className="priority-chip">{[e.location_city, e.location_state].filter(Boolean).join(', ')}</span>
-                        )}
-                        {(() => { const skills = (e.event_skills || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
+                        {(e.event_skills || []).slice(0,3).map((s, idx) => (
+                          <span key={idx} className="skill-chip">{s}</span>
+                        ))}
                       </div>
                       <div className="task-actions">
                         <a className="register-btn register-btn--sm" href={e.rsvp_url || '#'} target="_blank" rel="noreferrer">
@@ -232,8 +232,10 @@ export default function Home({ user }) {
                         {t.end_ts && <span> · End: {new Date(t.end_ts).toLocaleString()}</span>}
                       </div>
                       <div className="task-meta">
-                        {(() => { const skills = (t.skills_required || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
-                        {t.priority && <span className="priority-chip">{t.priority}</span>}
+                        {(t.skills_required || []).slice(0,3).map((s, idx) => (
+                          <span key={idx} className="skill-chip">{s}</span>
+                        ))}
+                        {t.mode && <span className="priority-chip">{t.mode}</span>}
                       </div>
                       <div className="task-actions">
                         <button
@@ -335,7 +337,12 @@ export default function Home({ user }) {
           <div className="analytics-card">
             <h3>Monthly Goal Progress</h3>
             <div className="progress-container">
-              <div className="progress-circle">
+              <div
+                className="progress-circle"
+                style={{
+                  background: `conic-gradient(#10b981 ${(analytics?.progress?.percentage || 0) * 3.6}deg, #e5e7eb 0deg)`
+                }}
+              >
                 <div className="progress-text">
                   {analytics?.progress?.percentage || 0}%
                 </div>
