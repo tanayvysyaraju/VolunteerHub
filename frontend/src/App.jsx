@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Landing from "./pages/Landing";
-import Login from "./pages/Login";
 import Home from "./pages/Home";
 import CompanyAnalytics from "./pages/CompanyAnalytics";
 import CreateEvent from "./pages/CreateEvent";
@@ -16,7 +15,7 @@ function RequireAuth({ children }) {
     fetch(`${API_URL}/auth/me`, { credentials: "include" }).then(r => setOk(r.ok)).catch(() => setOk(false));
   }, []);
   if (ok === null) return null;
-  return ok ? children : <Navigate to="/login" replace />;
+  return ok ? children : <Navigate to="/" replace />;
 }
 
 export default function App() {
@@ -30,7 +29,6 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login onLogin={setUser} />} />
         <Route
           path="/home"
           element={
@@ -55,14 +53,7 @@ export default function App() {
             </RequireAuth>
           }
         />
-        <Route
-          path="/events"
-          element={
-            <RequireAuth>
-              <Events user={user} />
-            </RequireAuth>
-          }
-        />
+        {/* /events removed */}
       </Routes>
     </BrowserRouter>
   );

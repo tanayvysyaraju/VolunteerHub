@@ -7,10 +7,14 @@ const API_URL = "http://localhost:8080";
 export default function Home({ user }) {
   const [recommendedTasks, setRecommendedTasks] = useState([]);
   const [trendingEvents, setTrendingEvents] = useState([]);
+  const [registeredTasks, setRegisteredTasks] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [communities, setCommunities] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [currentSlide, setCurrentSlide] = useState(0);
+  const [recSlide, setRecSlide] = useState(0);
+  const [trendSlide, setTrendSlide] = useState(0);
+  const [regSlide, setRegSlide] = useState(0);
+  const regCount = registeredTasks.length;
 
   useEffect(() => {
     fetchHomeData();
@@ -18,22 +22,25 @@ export default function Home({ user }) {
 
   const fetchHomeData = async () => {
     try {
-      const [tasksRes, eventsRes, analyticsRes, communitiesRes] = await Promise.all([
+      const [tasksRes, trendingRes, regRes, analyticsRes, communitiesRes] = await Promise.all([
         fetch(`${API_URL}/api/tasks/recommended?use_gemini=true`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/trending-events`, { credentials: "include" }),
+        fetch(`${API_URL}/api/tasks/registered`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/analytics`, { credentials: "include" }),
         fetch(`${API_URL}/api/home/communities`, { credentials: "include" })
       ]);
 
-      const [tasksData, eventsData, analyticsData, communitiesData] = await Promise.all([
+      const [tasksData, trendingData, regData, analyticsData, communitiesData] = await Promise.all([
         tasksRes.json(),
-        eventsRes.json(),
+        trendingRes.json(),
+        regRes.json(),
         analyticsRes.json(),
         communitiesRes.json()
       ]);
 
       setRecommendedTasks(tasksData.tasks);
-      setTrendingEvents(eventsData.events);
+      setTrendingEvents(trendingData.events || []);
+      setRegisteredTasks(regData.tasks || []);
       setAnalytics(analyticsData);
       setCommunities(communitiesData);
     } catch (error) {
@@ -43,13 +50,12 @@ export default function Home({ user }) {
     }
   };
 
-  const nextSlide = () => {
-    setCurrentSlide((prev) => (prev + 1) % 5);
-  };
-
-  const prevSlide = () => {
-    setCurrentSlide((prev) => (prev - 1 + 5) % 5);
-  };
+  const nextRec = () => setRecSlide((p) => (p + 1) % 5);
+  const prevRec = () => setRecSlide((p) => (p - 1 + 5) % 5);
+  const nextTrend = () => setTrendSlide((p) => (p + 1) % 5);
+  const prevTrend = () => setTrendSlide((p) => (p - 1 + 5) % 5);
+  const nextReg = (len) => setRegSlide((p) => (len ? (p + 1) % len : 0));
+  const prevReg = (len) => setRegSlide((p) => (len ? (p - 1 + len) % len : 0));
 
   if (loading) {
     return (
@@ -83,26 +89,49 @@ export default function Home({ user }) {
         <div className="section-header">
           <h2>Recommended for You</h2>
           <div className="slider-controls">
-            <button onClick={prevSlide} className="slider-btn">‹</button>
-            <button onClick={nextSlide} className="slider-btn">›</button>
+            <button onClick={prevRec} className="slider-btn">‹</button>
+            <button onClick={nextRec} className="slider-btn">›</button>
           </div>
         </div>
         
         <div className="slider-container">
-          <div className="slider-track" style={{ transform: `translateX(-${currentSlide * 20}%)` }}>
+          <div className="slider-track" style={{ transform: `translateX(-${recSlide * 20}%)` }}>
             {Array.from({ length: 5 }, (_, i) => {
               const t = recommendedTasks[i];
               return (
                 <div key={i} className="slider-item">
                   {t ? (
                     <div className="task-card">
-                      <h3 className="task-title">{t.title}</h3>
+                      <div className="task-card-header">
+                        <h3 className="task-title">{t.title}</h3>
+                        <span className="reg-badge">{t.registered_count ?? 0}</span>
+                      </div>
                       <p className="task-desc">{t.description || ""}</p>
+                      <div className="task-time">
+                        {t.start_ts && <span>Start: {new Date(t.start_ts).toLocaleString()}</span>}
+                        {t.end_ts && <span> · End: {new Date(t.end_ts).toLocaleString()}</span>}
+                      </div>
                       <div className="task-meta">
-                        {(t.skills_required || []).slice(0,3).map((s, idx) => (
-                          <span key={idx} className="skill-chip">{s}</span>
-                        ))}
+                        {(() => { const skills = (t.skills_required || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
                         {t.priority && <span className="priority-chip">{t.priority}</span>}
+                      </div>
+                      <div className="task-actions">
+                        <button
+                          className="register-btn"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`${API_URL}/api/tasks/${t.id}/register`, { method: 'POST', credentials: 'include' });
+                              const data = await res.json();
+                              if (res.ok) {
+                                fetchHomeData();
+                              } else {
+                                console.error(data);
+                              }
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                        >Register</button>
                       </div>
                     </div>
                   ) : (
@@ -120,31 +149,117 @@ export default function Home({ user }) {
         </div>
       </section>
 
-      {/* Trending Events Slider */}
+      {/* Events Slider */}
       <section className="trending-section">
         <div className="section-header">
-          <h2>Trending Events</h2>
+          <h2>Trending</h2>
           <div className="slider-controls">
-            <button onClick={prevSlide} className="slider-btn">‹</button>
-            <button onClick={nextSlide} className="slider-btn">›</button>
+            <button onClick={prevTrend} className="slider-btn">‹</button>
+            <button onClick={nextTrend} className="slider-btn">›</button>
           </div>
         </div>
         
         <div className="slider-container">
-          <div className="slider-track" style={{ transform: `translateX(-${currentSlide * 20}%)` }}>
-            {Array.from({ length: 5 }, (_, i) => (
-              <div key={i} className="slider-item">
-                <div className="empty-state">
-                  <div className="empty-icon">🔥</div>
-                  <h3>Event {i + 1}</h3>
-                  <p>No trending events yet</p>
-                  <span className="coming-soon">Coming Soon</span>
+          <div className="slider-track" style={{ transform: `translateX(-${trendSlide * 20}%)` }}>
+            {Array.from({ length: 5 }, (_, i) => {
+              const e = trendingEvents[i];
+              return (
+                <div key={i} className="slider-item">
+                  {e ? (
+                    <div className="task-card">
+                      <div className="task-card-header">
+                        <h3 className="task-title">{e.title}</h3>
+                        <span className="reg-badge">{e.total_registered_count ?? 0}</span>
+                      </div>
+                      <p className="task-desc">{e.description || ''}</p>
+                      <div className="task-time">
+                        {e.event_start_ts && <span>Start: {new Date(e.event_start_ts).toLocaleString()}</span>}
+                        {e.event_end_ts && <span> · End: {new Date(e.event_end_ts).toLocaleString()}</span>}
+                      </div>
+                      <div className="task-meta">
+                        {e.mode && <span className="priority-chip">{e.mode}</span>}
+                        {(e.location_city || e.location_state) && (
+                          <span className="priority-chip">{[e.location_city, e.location_state].filter(Boolean).join(', ')}</span>
+                        )}
+                        {(() => { const skills = (e.event_skills || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
+                      </div>
+                      <div className="task-actions">
+                        <a className="register-btn register-btn--sm" href={e.rsvp_url || '#'} target="_blank" rel="noreferrer">
+                          {e.user_registered ? 'Registered' : 'Register'}
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <div className="empty-icon">🔥</div>
+                      <h3>Event {i + 1}</h3>
+                      <p>No events yet</p>
+                      <span className="coming-soon">Coming Soon</span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
+
+      {/* Registered Events/Tasks */}
+      <section className="registered-section">
+        <div className="section-header">
+          <h2>Registered Events</h2>
+          <div className="slider-controls">
+            <button onClick={() => prevReg(registeredTasks.length)} className="slider-btn">‹</button>
+            <button onClick={() => nextReg(registeredTasks.length)} className="slider-btn">›</button>
+          </div>
+        </div>
+        <div className="panel-container">
+          {registeredTasks.length === 0 ? (
+            <div className="empty-message">You haven’t registered for any tasks yet.</div>
+          ) : (
+            <div className="slider-container">
+              <div className="slider-track" style={{ width: `${regCount * 100}%`, transform: `translateX(-${regCount ? (regSlide * 100) / regCount : 0}%)` }}>
+                {registeredTasks.map((t, i) => (
+                  <div key={t.id} className="slider-item" style={{ width: `${regCount ? 100 / regCount : 100}%` }}>
+                    <div className="task-card">
+                      <div className="task-card-header">
+                        <h3 className="task-title">{t.title}</h3>
+                        <span className="reg-badge">{t.registered_count ?? 0}</span>
+                      </div>
+                      <p className="task-desc">{t.description || ''}</p>
+                      <div className="task-time">
+                        {t.start_ts && <span>Start: {new Date(t.start_ts).toLocaleString()}</span>}
+                        {t.end_ts && <span> · End: {new Date(t.end_ts).toLocaleString()}</span>}
+                      </div>
+                      <div className="task-meta">
+                        {(() => { const skills = (t.skills_required || []).slice(0,3); while (skills.length < 3) skills.push('TBD'); return skills.map((s, idx) => (<span key={idx} className="skill-chip">{s}</span>)); })()}
+                        {t.priority && <span className="priority-chip">{t.priority}</span>}
+                      </div>
+                      <div className="task-actions">
+                        <button
+                          className="register-btn registered"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`${API_URL}/api/tasks/${t.id}/register`, { method: 'DELETE', credentials: 'include' });
+                              await res.json();
+                              // Reset slide if needed then refresh
+                              setRegSlide((s) => (s >= registeredTasks.length - 1 ? 0 : s));
+                              fetchHomeData();
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                        >Unregister</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
 
       {/* Analytics Dashboard */}
       <section className="analytics-section">
@@ -168,7 +283,18 @@ export default function Home({ user }) {
                 <div className="metric-label">Last Month</div>
               </div>
             </div>
-            <div className="empty-message">No event data available yet</div>
+            {registeredTasks.length > 0 ? (
+              <div className="registered-names">
+                <div className="list-title">Your Registered Events</div>
+                <ul>
+                  {(analytics?.registered_events?.names || []).map((name, idx) => (
+                    <li key={idx} className="registered-name">{name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="empty-message">No event data available yet</div>
+            )}
           </div>
 
           {/* Top Skills */}

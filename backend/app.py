@@ -577,13 +577,15 @@ def create_event():
                     inferred = [s for s, _ in counts.most_common() if s in SKILL_VOCAB][:3]
 
                 db.execute(text("""
-                    INSERT INTO event_task (event_id, title, description, skills_required, priority, status)
-                    VALUES (:event_id, :title, :description, :skills_required, 'medium', 'open')
+                    INSERT INTO event_task (event_id, title, description, skills_required, priority, status, start_ts, end_ts)
+                    VALUES (:event_id, :title, :description, :skills_required, 'medium', 'open', :start_ts, :end_ts)
                 """), {
                     "event_id": ev["id"],
                     "title": st.get("title", "Task"),
                     "description": st.get("description", ""),
-                    "skills_required": inferred
+                    "skills_required": inferred,
+                    "start_ts": None,
+                    "end_ts": None
                 })
             db.commit()
 
@@ -862,15 +864,38 @@ def call_gemini_rank_tasks(user_skills: list[str], tasks: list[dict]) -> list[st
 @app.get("/api/events")
 @jwt_required()
 def list_events():
+    user_id = get_jwt_identity()
     with SessionLocal() as db:
         rows = db.execute(text("""
-            SELECT id, organization_id, title, description, mode,
-                   location_city, location_state, is_remote, causes,
-                   skills_needed, tags, min_duration_min, rsvp_url, contact_email,
-                   created_at, updated_at
-            FROM event
-            ORDER BY created_at DESC
-        """)).mappings().all()
+            SELECT 
+              e.id, e.organization_id, e.title, e.description, e.mode,
+              e.location_city, e.location_state, e.is_remote, e.causes,
+              e.skills_needed, e.tags, e.min_duration_min, e.rsvp_url, e.contact_email,
+              e.created_at, e.updated_at,
+              (
+                SELECT COALESCE(COUNT(DISTINCT utr.user_id), 0)
+                FROM user_task_registration utr
+                JOIN event_task et ON et.id = utr.task_id
+                WHERE et.event_id = e.id
+              ) AS total_registered_count,
+              (SELECT MIN(start_ts) FROM event_task et WHERE et.event_id = e.id) AS event_start_ts,
+              (SELECT MAX(end_ts)   FROM event_task et WHERE et.event_id = e.id) AS event_end_ts,
+              COALESCE((
+                SELECT ARRAY(
+                  SELECT DISTINCT s
+                  FROM event_task et, unnest(et.skills_required) AS s
+                  WHERE et.event_id = e.id AND s IS NOT NULL
+                )
+              ), ARRAY[]::TEXT[]) AS event_skills,
+              EXISTS (
+                SELECT 1
+                FROM user_task_registration utr
+                JOIN event_task et2 ON et2.id = utr.task_id
+                WHERE utr.user_id = :uid AND et2.event_id = e.id
+              ) AS user_registered
+            FROM event e
+            ORDER BY e.created_at DESC
+        """), {"uid": user_id}).mappings().all()
     return jsonify({"events": [dict(r) for r in rows]}), 200
 
 # -------------------------
@@ -920,9 +945,9 @@ def create_event_task(event_id):
 
         # Create task
         task = db.execute(text("""
-            INSERT INTO event_task (event_id, title, description, skills_required, estimated_duration_min, priority, status)
-            VALUES (:event_id, :title, :description, :skills_required, :estimated_duration_min, :priority, :status)
-            RETURNING id, event_id, title, description, skills_required, estimated_duration_min, priority, status, assigned_to, created_at, updated_at
+            INSERT INTO event_task (event_id, title, description, skills_required, estimated_duration_min, priority, status, start_ts, end_ts)
+            VALUES (:event_id, :title, :description, :skills_required, :estimated_duration_min, :priority, :status, :start_ts, :end_ts)
+            RETURNING id, event_id, title, description, skills_required, estimated_duration_min, priority, status, assigned_to, start_ts, end_ts, registered_count, created_at, updated_at
         """), {
             "event_id": event_id,
             "title": data["title"],
@@ -930,7 +955,9 @@ def create_event_task(event_id):
             "skills_required": skills_required,
             "estimated_duration_min": data.get("estimated_duration_min"),
             "priority": data.get("priority", "medium"),
-            "status": data.get("status", "open")
+            "status": data.get("status", "open"),
+            "start_ts": data.get("start_ts"),
+            "end_ts": data.get("end_ts")
         }).mappings().first()
         
         db.commit()
@@ -942,12 +969,18 @@ def get_event_tasks(event_id):
     """Get all tasks for an event"""
     with SessionLocal() as db:
         tasks = db.execute(text("""
-            SELECT id, event_id, title, description, skills_required, estimated_duration_min, 
-                   priority, status, assigned_to, created_at, updated_at
-            FROM event_task 
-            WHERE event_id = :event_id
-            ORDER BY created_at DESC
-        """), {"event_id": event_id}).mappings().all()
+            SELECT 
+              et.id, et.event_id, et.title, et.description, et.skills_required, et.estimated_duration_min, 
+              et.priority, et.status, et.assigned_to, et.start_ts, et.end_ts, et.registered_count,
+              et.created_at, et.updated_at,
+              EXISTS (
+                SELECT 1 FROM user_task_registration utr
+                WHERE utr.user_id = :uid AND utr.task_id = et.id
+              ) AS user_registered
+            FROM event_task et
+            WHERE et.event_id = :event_id
+            ORDER BY et.created_at DESC
+        """), {"event_id": event_id, "uid": get_jwt_identity()}).mappings().all()
         
         return jsonify({"tasks": [dict(t) for t in tasks]}), 200
 
@@ -967,11 +1000,34 @@ def get_recommended_event_tasks():
         user_skills = (usr.get("skills") or [])
 
         tasks = db.execute(text("""
-            SELECT id, event_id, title, description, skills_required, priority, status, created_at
-            FROM event_task
-            WHERE status = 'open'
-            ORDER BY created_at DESC
-        """)).mappings().all()
+            SELECT 
+              et.id, et.event_id, et.title, et.description, et.skills_required, et.priority, et.status, 
+              et.start_ts, et.end_ts, et.registered_count, et.created_at,
+              COALESCE((
+                SELECT ARRAY(
+                  SELECT DISTINCT s
+                  FROM event_task etx, unnest(etx.skills_required) AS s
+                  WHERE etx.event_id = et.event_id AND s IS NOT NULL
+                )
+              ), ARRAY[]::TEXT[]) AS event_skills,
+              EXISTS (
+                SELECT 1 FROM user_task_registration utr1
+                WHERE utr1.user_id = :uid AND utr1.task_id = et.id
+              ) AS user_registered_task,
+              EXISTS (
+                SELECT 1 
+                FROM user_task_registration utr2
+                JOIN event_task et2 ON et2.id = utr2.task_id
+                WHERE utr2.user_id = :uid AND et2.event_id = et.event_id
+              ) AS user_registered_event
+            FROM event_task et
+            WHERE et.status = 'open'
+              AND NOT EXISTS (
+                SELECT 1 FROM user_task_registration utr
+                WHERE utr.user_id = :uid AND utr.task_id = et.id
+              )
+            ORDER BY et.created_at DESC
+        """), {"uid": user_id}).mappings().all()
 
         # Gemini-based ranking if requested
         from flask import request as _rq
@@ -988,6 +1044,38 @@ def get_recommended_event_tasks():
             return len({s for s in ts if s in user_skills})
         ranked = sorted(tasks, key=score, reverse=True)[:5]
         return jsonify({"tasks": [dict(t) for t in ranked]}), 200
+
+@app.get("/api/tasks/registered")
+@jwt_required()
+def get_registered_tasks():
+    """Return tasks the current user has registered for"""
+    user_id = get_jwt_identity()
+    with SessionLocal() as db:
+        rows = db.execute(text("""
+            SELECT 
+              et.id, et.event_id, et.title, et.description, et.skills_required, et.priority, et.status,
+              et.start_ts, et.end_ts, et.registered_count, et.created_at, et.updated_at,
+              COALESCE((
+                SELECT ARRAY(
+                  SELECT DISTINCT s
+                  FROM event_task etx, unnest(etx.skills_required) AS s
+                  WHERE etx.event_id = et.event_id AND s IS NOT NULL
+                )
+              ), ARRAY[]::TEXT[]) AS event_skills,
+              e.title AS event_title
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            JOIN event e ON e.id = et.event_id
+            WHERE utr.user_id = :uid
+            ORDER BY et.created_at DESC
+        """), {"uid": user_id}).mappings().all()
+    # mark as user_registered=true in response
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["user_registered"] = True
+        out.append(d)
+    return jsonify({"tasks": out}), 200
 
 @app.put("/api/tasks/<uuid:task_id>/assign")
 @jwt_required()
@@ -1067,6 +1155,55 @@ def complete_task(task_id):
         db.commit()
         return jsonify({"message": "Task completed successfully"}), 200
 
+@app.post("/api/tasks/<uuid:task_id>/register")
+@jwt_required()
+def register_for_task(task_id):
+    user_id = get_jwt_identity()
+    with SessionLocal() as db:
+        exists = db.execute(text("""
+            SELECT 1 FROM user_task_registration WHERE user_id=:uid AND task_id=:tid
+        """), {"uid": user_id, "tid": task_id}).first()
+        if exists:
+            return jsonify({"message": "Already registered"}), 200
+
+        ok = db.execute(text("""
+            INSERT INTO user_task_registration (user_id, task_id)
+            VALUES (:uid, :tid)
+            RETURNING user_id
+        """), {"uid": user_id, "tid": task_id}).first()
+        if not ok:
+            return jsonify({"error": "Unable to register"}), 400
+
+        db.execute(text("""
+            UPDATE event_task 
+            SET registered_count = COALESCE(registered_count,0) + 1, updated_at=now()
+            WHERE id = :tid
+        """), {"tid": task_id})
+        db.commit()
+        return jsonify({"message": "Registered"}), 200
+
+@app.delete("/api/tasks/<uuid:task_id>/register")
+@jwt_required()
+def unregister_for_task(task_id):
+    user_id = get_jwt_identity()
+    with SessionLocal() as db:
+        existed = db.execute(text("""
+            DELETE FROM user_task_registration 
+            WHERE user_id=:uid AND task_id=:tid
+            RETURNING 1
+        """), {"uid": user_id, "tid": task_id}).first()
+
+        if not existed:
+            return jsonify({"message": "Not registered"}), 200
+
+        db.execute(text("""
+            UPDATE event_task 
+            SET registered_count = GREATEST(COALESCE(registered_count,0) - 1, 0), updated_at=now()
+            WHERE id = :tid
+        """), {"tid": task_id})
+        db.commit()
+        return jsonify({"message": "Unregistered"}), 200
+
 # -------------------------
 # Home Page Endpoints
 # -------------------------
@@ -1086,55 +1223,206 @@ def get_recommended_tasks():
 @app.get("/api/home/trending-events")
 @jwt_required()
 def get_trending_events():
-    """Get trending events"""
+    """Top 5 events ranked by total registrations across their tasks"""
     user_id = get_jwt_identity()
-    
-    # For now, return empty data structure
-    return {
-        "events": [],
-        "message": "No trending events available yet. Data will be populated soon."
-    }, 200
+    with SessionLocal() as db:
+        rows = db.execute(text("""
+            SELECT 
+              e.id, e.organization_id, e.title, e.description, e.mode,
+              e.location_city, e.location_state, e.is_remote, e.causes,
+              e.skills_needed, e.tags, e.min_duration_min, e.rsvp_url, e.contact_email,
+              e.created_at, e.updated_at,
+              COALESCE((SELECT SUM(registered_count)::int FROM event_task et WHERE et.event_id = e.id), 0) AS total_registered_count,
+              (SELECT MIN(start_ts) FROM event_task et WHERE et.event_id = e.id) AS event_start_ts,
+              (SELECT MAX(end_ts)   FROM event_task et WHERE et.event_id = e.id) AS event_end_ts,
+              EXISTS (
+                SELECT 1
+                FROM user_task_registration utr
+                JOIN event_task et2 ON et2.id = utr.task_id
+                WHERE utr.user_id = :uid AND et2.event_id = e.id
+              ) AS user_registered
+            FROM event e
+            ORDER BY total_registered_count DESC NULLS LAST, e.created_at DESC
+            LIMIT 5
+        """), {"uid": user_id}).mappings().all()
+    return jsonify({"events": [dict(r) for r in rows]}), 200
 
 @app.get("/api/home/analytics")
 @jwt_required()
 def get_analytics():
-    """Get user analytics dashboard data"""
+    """Get user analytics dashboard data (computed)"""
     user_id = get_jwt_identity()
-    
-    # For now, return empty data structure
-    return {
+    now = datetime.now(timezone.utc)
+    first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Compute first day of last month
+    last_month_year = first_day_this_month.year if first_day_this_month.month > 1 else first_day_this_month.year - 1
+    last_month_month = first_day_this_month.month - 1 if first_day_this_month.month > 1 else 12
+    first_day_last_month = first_day_this_month.replace(year=last_month_year, month=last_month_month)
+
+    with SessionLocal() as db:
+        # User skills
+        user_row = db.execute(text("""
+            SELECT skills FROM app_user WHERE id = :uid
+        """), {"uid": user_id}).mappings().first()
+        user_skills = list(user_row.get("skills") or []) if user_row else []
+
+        # Registrations with timestamps, event titles, task start_ts and skills
+        regs = db.execute(text("""
+            SELECT 
+              utr.registered_at,
+              et.event_id,
+              e.title AS event_title,
+              et.start_ts AS task_start_ts,
+              et.skills_required
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            JOIN event e ON e.id = et.event_id
+            WHERE utr.user_id = :uid
+        """), {"uid": user_id}).mappings().all()
+
+    # Distinct registered events overall
+    distinct_events_all = {r["event_id"] for r in regs if r.get("event_id")}
+
+    # This month and last month using registration time
+    this_month_events = set()
+    last_month_events = set()
+    for r in regs:
+        rat = r.get("registered_at")
+        ev_id = r.get("event_id")
+        tstart = r.get("task_start_ts")
+        if not ev_id:
+            continue
+        # Prefer task/event start time window to bucket by month; fallback to registration time
+        ref_time = tstart or rat
+        if not ref_time:
+            continue
+        if ref_time >= first_day_this_month:
+            this_month_events.add(ev_id)
+        elif first_day_last_month <= ref_time < first_day_this_month:
+            last_month_events.add(ev_id)
+
+    # Top interests derived from registered task skills (aggregate)
+    skill_counts = Counter()
+    for r in regs:
+        skills = r.get("skills_required") or []
+        for s in skills:
+            if s:
+                skill_counts[s] += 1
+    top_interests = [s for s, _ in skill_counts.most_common(5)]
+
+    # Simple monthly goal (static 5) and progress
+    goal = 5
+    current = len(this_month_events)
+    percentage = int(round(100 * current / goal)) if goal > 0 else 0
+
+    # Build distinct registered event names sorted by most recent relevant time
+    ev_latest: dict[str, tuple[datetime, str]] = {}
+    for r in regs:
+        ev_id = r.get("event_id")
+        title = r.get("event_title") or "Event"
+        ref_time = r.get("task_start_ts") or r.get("registered_at") or now
+        if ev_id and (ev_id not in ev_latest or ref_time > ev_latest[ev_id][0]):
+            ev_latest[ev_id] = (ref_time, title)
+    registered_event_names = [t for _, t in sorted(ev_latest.values(), key=lambda x: x[0], reverse=True)]
+
+    payload = {
         "registered_events": {
-            "total": 0,
-            "this_month": 0,
-            "last_month": 0,
-            "trend": "no_data"
+            "total": len(distinct_events_all),
+            "this_month": len(this_month_events),
+            "last_month": len(last_month_events),
+            "trend": "no_data" if not regs else ("up" if len(this_month_events) >= len(last_month_events) else "down"),
+            "names": registered_event_names
         },
-        "top_skills": [],
-        "top_interests": [],
+        "top_skills": user_skills[:5],
+        "top_interests": top_interests,
         "progress": {
-            "goal": 0,
-            "current": 0,
-            "percentage": 0,
-            "message": "Set your monthly goal to track progress"
+            "goal": goal,
+            "current": current,
+            "percentage": percentage,
+            "message": "Keep going!"
         },
         "communities": {
             "registered": [],
             "leaderboard": []
         }
-    }, 200
+    }
+    return payload, 200
 
 @app.get("/api/home/communities")
 @jwt_required()
 def get_communities():
-    """Get user's communities and leaderboard"""
+    """Get user's communities and leaderboard ranked by registrations."""
     user_id = get_jwt_identity()
-    
-    # For now, return empty data structure
-    return {
-        "user_communities": [],
-        "leaderboard": [],
-        "message": "No communities available yet. Join communities to see leaderboard."
-    }, 200
+
+    with SessionLocal() as db:
+        me = db.execute(text("""
+            SELECT department_id, erg_id FROM app_user WHERE id = :uid
+        """), {"uid": user_id}).mappings().first()
+
+        # Department leaderboard
+        dept_rows = db.execute(text("""
+            SELECT d.id AS id, 'department'::text AS kind, d.name AS name,
+                   COALESCE(COUNT(utr.user_id), 0) AS score
+            FROM department d
+            LEFT JOIN app_user au ON au.department_id = d.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY d.id, d.name
+        """)).mappings().all()
+
+        # ERG leaderboard
+        erg_rows = db.execute(text("""
+            SELECT e.id AS id, 'erg'::text AS kind, e.name AS name,
+                   COALESCE(COUNT(utr.user_id), 0) AS score
+            FROM erg e
+            LEFT JOIN app_user au ON au.erg_id = e.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY e.id, e.name
+        """)).mappings().all()
+
+    combined = []
+    for r in dept_rows:
+        combined.append({
+            "id": r["id"],
+            "kind": r["kind"],
+            "name": f"Dept: {r['name']}",
+            "score": int(r["score"] or 0),
+        })
+    for r in erg_rows:
+        combined.append({
+            "id": r["id"],
+            "kind": r["kind"],
+            "name": f"ERG: {r['name']}",
+            "score": int(r["score"] or 0),
+        })
+
+    # Rank by score desc (dense ranking)
+    combined.sort(key=lambda x: (-x["score"], x["name"]))
+    last_score = None
+    rank = 0
+    for i, item in enumerate(combined):
+        if item["score"] != last_score:
+            rank = i + 1
+            last_score = item["score"]
+        item["rank"] = rank
+
+    # User communities with ranks
+    user_communities = []
+    if me:
+        if me.get("department_id") is not None:
+            for c in combined:
+                if c["kind"] == "department" and c["id"] == me["department_id"]:
+                    user_communities.append({"name": c["name"], "rank": c["rank"]})
+                    break
+        if me.get("erg_id") is not None:
+            for c in combined:
+                if c["kind"] == "erg" and c["id"] == me["erg_id"]:
+                    user_communities.append({"name": c["name"], "rank": c["rank"]})
+                    break
+
+    return jsonify({
+        "user_communities": user_communities,
+        "leaderboard": [{"name": c["name"], "score": c["score"]} for c in combined]
+    }), 200
 
 # -------------------------
 # Company Analytics Endpoints
@@ -1142,74 +1430,162 @@ def get_communities():
 @app.get("/api/company/overview")
 @jwt_required()
 def get_company_overview():
-    """Get company-wide overview statistics"""
-    user_id = get_jwt_identity()
-    
-    # For now, return empty data structure with comprehensive metrics
+    """Company-wide overview statistics from live data"""
+    now = datetime.now(timezone.utc)
+    start_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_month_year = start_this_month.year if start_this_month.month > 1 else start_this_month.year - 1
+    prev_month_month = start_this_month.month - 1 if start_this_month.month > 1 else 12
+    start_prev_month = start_this_month.replace(year=prev_month_year, month=prev_month_month)
+
+    with SessionLocal() as db:
+        total_employees = db.execute(text("SELECT COUNT(*) FROM app_user")).scalar() or 0
+        active_volunteers = db.execute(text("SELECT COUNT(DISTINCT user_id) FROM user_task_registration")).scalar() or 0
+        total_minutes = db.execute(text(
+            """
+            SELECT COALESCE(SUM(et.estimated_duration_min),0)
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            """
+        )).scalar() or 0
+        total_hours = int(round(total_minutes / 60))
+        total_events_completed = db.execute(text("SELECT COUNT(*) FROM event_task WHERE status='completed'" )).scalar() or 0
+        avg_hours_per_volunteer = (total_hours / active_volunteers) if active_volunteers else 0
+
+        current_month_regs = db.execute(text(
+            "SELECT COUNT(*) FROM user_task_registration WHERE registered_at >= :t"
+        ), {"t": start_this_month}).scalar() or 0
+        prev_month_regs = db.execute(text(
+            "SELECT COUNT(*) FROM user_task_registration WHERE registered_at >= :a AND registered_at < :b"
+        ), {"a": start_prev_month, "b": start_this_month}).scalar() or 0
+        growth_percentage = 0
+        if prev_month_regs:
+            growth_percentage = int(round((current_month_regs - prev_month_regs) * 100 / prev_month_regs))
+
+        top_departments = db.execute(text(
+            """
+            SELECT d.name AS name, COALESCE(COUNT(utr.user_id),0) AS score
+            FROM department d
+            LEFT JOIN app_user au ON au.department_id = d.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY d.name
+            ORDER BY score DESC, d.name ASC
+            LIMIT 5
+            """
+        )).mappings().all()
+
     return {
-        "total_employees": 0,
-        "active_volunteers": 0,
-        "participation_rate": 0,
-        "total_hours_volunteered": 0,
-        "total_events_completed": 0,
-        "average_hours_per_volunteer": 0,
-        "top_departments": [],
+        "total_employees": total_employees,
+        "active_volunteers": active_volunteers,
+        "participation_rate": int(round((active_volunteers * 100) / total_employees)) if total_employees else 0,
+        "total_hours_volunteered": total_hours,
+        "total_events_completed": total_events_completed,
+        "average_hours_per_volunteer": int(round(avg_hours_per_volunteer)),
+        "top_departments": [{"name": r["name"], "score": int(r["score"] or 0)} for r in top_departments],
         "monthly_trends": {
-            "current_month": 0,
-            "previous_month": 0,
-            "growth_percentage": 0
-        },
-        "message": "Company analytics will be populated when data is available."
+            "current_month": current_month_regs,
+            "previous_month": prev_month_regs,
+            "growth_percentage": growth_percentage
+        }
     }, 200
 
 @app.get("/api/company/engagement")
 @jwt_required()
 def get_engagement_metrics():
-    """Get employee engagement and participation metrics"""
-    user_id = get_jwt_identity()
-    
+    """Employee engagement and participation metrics"""
+    now = datetime.now(timezone.utc)
+    last_90 = now - timedelta(days=90)
+    last_60 = now - timedelta(days=60)
+
+    with SessionLocal() as db:
+        total_users = db.execute(text("SELECT COUNT(*) FROM app_user")).scalar() or 0
+        rows = db.execute(text(
+            """
+            SELECT au.id AS user_id, COALESCE(COUNT(utr.user_id),0) AS cnt
+            FROM app_user au
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY au.id
+            """
+        )).mappings().all()
+        cnts = [int(r["cnt"] or 0) for r in rows]
+        highly = sum(1 for c in cnts if c >= 5)
+        moderate = sum(1 for c in cnts if 2 <= c <= 4)
+        low = sum(1 for c in cnts if c == 1)
+        none = sum(1 for c in cnts if c == 0)
+
+        skills90 = db.execute(text(
+            """
+            SELECT DISTINCT s
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            CROSS JOIN LATERAL UNNEST(et.skills_required) AS s
+            WHERE utr.registered_at >= :t
+            """
+        ), {"t": last_90}).scalars().all()
+        new_skills = len([s for s in skills90 if s])
+        minutes90 = db.execute(text(
+            """
+            SELECT COALESCE(SUM(et.estimated_duration_min),0)
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            WHERE utr.registered_at >= :t
+            """
+        ), {"t": last_90}).scalar() or 0
+        learning_hours = int(round(minutes90 / 60))
+        skill_counts = db.execute(text(
+            """
+            SELECT s AS skill, COUNT(*) AS c
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            CROSS JOIN LATERAL UNNEST(et.skills_required) AS s
+            GROUP BY s
+            ORDER BY c DESC
+            LIMIT 5
+            """
+        )).mappings().all()
+
+        active_volunteers = db.execute(text("SELECT COUNT(DISTINCT user_id) FROM user_task_registration")).scalar() or 0
+        recent_active = db.execute(text(
+            "SELECT COUNT(DISTINCT user_id) FROM user_task_registration WHERE registered_at >= :t"
+        ), {"t": last_60}).scalar() or 0
+        retention_rate = int(round((recent_active * 100) / active_volunteers)) if active_volunteers else 0
+
     return {
         "participation_breakdown": {
-            "highly_engaged": 0,
-            "moderately_engaged": 0,
-            "low_engagement": 0,
-            "not_participated": 0
+            "highly_engaged": int(round(highly * 100 / total_users)) if total_users else 0,
+            "moderately_engaged": int(round(moderate * 100 / total_users)) if total_users else 0,
+            "low_engagement": int(round(low * 100 / total_users)) if total_users else 0,
+            "not_participated": int(round(none * 100 / total_users)) if total_users else 0
         },
         "department_participation": [],
         "skill_development": {
-            "new_skills_learned": 0,
-            "skill_categories": [],
-            "learning_hours": 0
+            "new_skills_learned": new_skills,
+            "skill_categories": [r["skill"] for r in skill_counts],
+            "learning_hours": learning_hours
         },
         "retention_impact": {
-            "volunteer_retention_rate": 0,
+            "volunteer_retention_rate": retention_rate,
             "satisfaction_score": 0,
             "recommendation_rate": 0
-        },
-        "message": "Engagement metrics will be calculated from volunteer data."
+        }
     }, 200
 
 @app.get("/api/company/impact")
 @jwt_required()
 def get_impact_analytics():
-    """Get community impact and social value metrics"""
-    user_id = get_jwt_identity()
-    
+    """Community impact and social value metrics"""
+    with SessionLocal() as db:
+        communities_served = db.execute(text(
+            "SELECT COUNT(DISTINCT department_id) FROM app_user au JOIN user_task_registration utr ON utr.user_id = au.id"
+        )).scalar() or 0
+        projects_completed = db.execute(text("SELECT COUNT(*) FROM event_task WHERE status='completed'" )).scalar() or 0
     return {
         "community_impact": {
-            "communities_served": 0,
+            "communities_served": communities_served,
             "people_helped": 0,
-            "projects_completed": 0,
+            "projects_completed": projects_completed,
             "social_value_created": 0
         },
-        "cause_areas": {
-            "education": 0,
-            "environment": 0,
-            "healthcare": 0,
-            "poverty_alleviation": 0,
-            "community_development": 0,
-            "other": 0
-        },
+        "cause_areas": {},
         "geographic_reach": {
             "cities_served": 0,
             "states_covered": 0,
@@ -1219,91 +1595,128 @@ def get_impact_analytics():
             "carbon_footprint_reduced": 0,
             "waste_diverted": 0,
             "renewable_energy_hours": 0
-        },
-        "message": "Impact analytics will be tracked from completed volunteer activities."
+        }
     }, 200
 
 @app.get("/api/company/progress")
 @jwt_required()
 def get_progress_tracking():
-    """Get progress tracking for goals and milestones"""
-    user_id = get_jwt_identity()
-    
+    """Get progress tracking for goals and milestones (events-based)"""
+    now = datetime.now(timezone.utc)
+    start_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    end_year = now.replace(month=12, day=31, hour=23, minute=59, second=59, microsecond=0)
+    with SessionLocal() as db:
+        events_ytd = db.execute(text(
+            """
+            SELECT COALESCE(COUNT(DISTINCT et.event_id),0)
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            WHERE utr.registered_at >= :start
+            """
+        ), {"start": start_year}).scalar() or 0
+    target = 100
+    pct = int(round((events_ytd * 100) / target)) if target else 0
+    days_remaining = (end_year.date() - now.date()).days
+    milestones = {
+        "first_10_events": {"achieved": events_ytd >= 10, "date": None},
+        "first_50_events": {"achieved": events_ytd >= 50, "date": None},
+        "first_100_events": {"achieved": events_ytd >= 100, "date": None}
+    }
     return {
         "annual_goals": {
-            "volunteer_hours_target": 10000,
-            "current_hours": 0,
-            "percentage_complete": 0,
-            "days_remaining": 365
+            "events_target": target,
+            "current_events": events_ytd,
+            "percentage_complete": pct,
+            "days_remaining": days_remaining
         },
         "department_goals": [],
-        "milestones": {
-            "first_100_hours": {"achieved": False, "date": None},
-            "first_500_hours": {"achieved": False, "date": None},
-            "first_1000_hours": {"achieved": False, "date": None},
-            "first_volunteer_month": {"achieved": False, "date": None}
-        },
+        "milestones": milestones,
         "quarterly_progress": {
             "q1": {"hours": 0, "events": 0, "participants": 0},
             "q2": {"hours": 0, "events": 0, "participants": 0},
             "q3": {"hours": 0, "events": 0, "participants": 0},
             "q4": {"hours": 0, "events": 0, "participants": 0}
-        },
-        "message": "Progress tracking will be updated as volunteers log activities."
+        }
     }, 200
 
 @app.get("/api/company/leaderboard")
 @jwt_required()
 def get_company_leaderboard():
-    """Get company-wide leaderboard and recognition"""
-    user_id = get_jwt_identity()
-    
+    """Get company-wide leaderboard"""
+    with SessionLocal() as db:
+        top_vol = db.execute(text(
+            """
+            SELECT au.full_name, COALESCE(SUM(et.estimated_duration_min),0) AS minutes
+            FROM app_user au
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            LEFT JOIN event_task et ON et.id = utr.task_id
+            GROUP BY au.full_name
+            ORDER BY minutes DESC, au.full_name ASC
+            LIMIT 10
+            """
+        )).mappings().all()
+
+        dept = db.execute(text(
+            """
+            SELECT d.name, COALESCE(COUNT(utr.user_id),0) AS score
+            FROM department d
+            LEFT JOIN app_user au ON au.department_id = d.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY d.name
+            ORDER BY score DESC, d.name ASC
+            LIMIT 10
+            """
+        )).mappings().all()
+
+        erg = db.execute(text(
+            """
+            SELECT e.name, COALESCE(COUNT(utr.user_id),0) AS score
+            FROM erg e
+            LEFT JOIN app_user au ON au.erg_id = e.id
+            LEFT JOIN user_task_registration utr ON utr.user_id = au.id
+            GROUP BY e.name
+            ORDER BY score DESC, e.name ASC
+            LIMIT 10
+            """
+        )).mappings().all()
+
     return {
-        "top_volunteers": [],
-        "department_rankings": [],
-        "monthly_winners": {
-            "volunteer_of_month": None,
-            "department_of_month": None,
-            "most_improved": None
-        },
-        "achievements": {
-            "total_achievements_unlocked": 0,
-            "recent_achievements": [],
-            "upcoming_milestones": []
-        },
-        "recognition_program": {
-            "badges_earned": 0,
-            "certificates_issued": 0,
-            "awards_given": 0
-        },
-        "message": "Leaderboard will be populated as volunteer activities are tracked."
+        "top_volunteers": [{"name": r["full_name"] or "User", "score": int(round((r["minutes"] or 0) / 60))} for r in top_vol],
+        "department_rankings": [{"name": r["name"], "score": int(r["score"] or 0)} for r in dept],
+        "erg_rankings": [{"name": r["name"], "score": int(r["score"] or 0)} for r in erg]
     }, 200
 
 @app.get("/api/company/trends")
 @jwt_required()
 def get_company_trends():
     """Get trending data and predictive analytics"""
-    user_id = get_jwt_identity()
-    
+    now = datetime.now(timezone.utc)
+    last_30 = now - timedelta(days=30)
+    with SessionLocal() as db:
+        last30_regs = db.execute(text(
+            "SELECT COUNT(*) FROM user_task_registration WHERE registered_at >= :t"
+        ), {"t": last_30}).scalar() or 0
+        daily_avg = round(last30_regs / 30, 2)
+
+        last7 = db.execute(text("SELECT COUNT(*) FROM user_task_registration WHERE registered_at >= :t"), {"t": now - timedelta(days=7)}).scalar() or 0
+        prev7 = db.execute(text("SELECT COUNT(*) FROM user_task_registration WHERE registered_at >= :a AND registered_at < :b"), {"a": now - timedelta(days=14), "b": now - timedelta(days=7)}).scalar() or 0
+        forecast = "stable"
+        if prev7:
+            delta = (last7 - prev7) / prev7
+            forecast = "rising" if delta > 0.1 else ("falling" if delta < -0.1 else "stable")
+
+        minutes_month = db.execute(text(
+            """
+            SELECT COALESCE(SUM(et.estimated_duration_min),0)
+            FROM user_task_registration utr
+            JOIN event_task et ON et.id = utr.task_id
+            WHERE utr.registered_at >= :t
+            """
+        ), {"t": now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)}).scalar() or 0
+
     return {
-        "participation_trends": {
-            "daily_average": 0,
-            "weekly_patterns": [],
-            "seasonal_variations": []
-        },
-        "popular_activities": [],
-        "emerging_causes": [],
-        "predictive_insights": {
-            "projected_hours": 0,
-            "engagement_forecast": "stable",
-            "recommended_actions": []
-        },
-        "benchmarking": {
-            "industry_average": 0,
-            "peer_comparison": "above_average",
-            "best_practices": []
-        },
-        "message": "Trend analysis will be available as more data is collected."
+        "participation_trends": {"daily_average": daily_avg},
+        "predictive_insights": {"projected_hours": int(round(minutes_month / 60)), "engagement_forecast": forecast}
     }, 200
 
 if __name__ == "__main__":

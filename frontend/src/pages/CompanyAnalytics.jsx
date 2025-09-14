@@ -283,8 +283,8 @@ function ProgressTab({ data }) {
           <h3>Annual Goals</h3>
           <div className="goal-progress">
             <div className="goal-header">
-              <span>Volunteer Hours Target</span>
-              <span>{data?.annual_goals?.current_hours || 0} / {data?.annual_goals?.volunteer_hours_target || 10000}</span>
+              <span>Volunteer Events Target</span>
+              <span>{data?.annual_goals?.current_events || 0} / {data?.annual_goals?.events_target || 100}</span>
             </div>
             <div className="progress-bar">
               <div 
@@ -327,18 +327,62 @@ function LeaderboardTab({ data }) {
       <div className="leaderboard-grid">
         <div className="leaderboard-card">
           <h3>Top Volunteers</h3>
-          <div className="empty-state">
-            <div className="empty-icon">🏆</div>
-            <p>No volunteer data available yet</p>
-          </div>
+          {data?.top_volunteers?.length ? (
+            <div className="leaderboard-list">
+              {data.top_volunteers.map((v, i) => (
+                <div key={i} className="leaderboard-item">
+                  <div className="leaderboard-rank">#{i + 1}</div>
+                  <div className="leaderboard-name">{v.name}</div>
+                  <div className="leaderboard-score">{v.score} hrs</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">🏆</div>
+              <p>No volunteer data available yet</p>
+            </div>
+          )}
         </div>
 
         <div className="leaderboard-card">
           <h3>Department Rankings</h3>
-          <div className="empty-state">
-            <div className="empty-icon">🏢</div>
-            <p>No department data available yet</p>
-          </div>
+          {data?.department_rankings?.length ? (
+            <div className="leaderboard-list">
+              {data.department_rankings.map((d, i) => (
+                <div key={i} className="leaderboard-item">
+                  <div className="leaderboard-rank">#{i + 1}</div>
+                  <div className="leaderboard-name">{d.name}</div>
+                  <div className="leaderboard-score">{d.score}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">🏢</div>
+              <p>No department data available yet</p>
+            </div>
+          )}
+        </div>
+
+        <div className="leaderboard-card">
+          <h3>ERG Rankings</h3>
+          {data?.erg_rankings?.length ? (
+            <div className="leaderboard-list">
+              {data.erg_rankings.map((e, i) => (
+                <div key={i} className="leaderboard-item">
+                  <div className="leaderboard-rank">#{i + 1}</div>
+                  <div className="leaderboard-name">{e.name}</div>
+                  <div className="leaderboard-score">{e.score}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">👥</div>
+              <p>No ERG data available yet</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
