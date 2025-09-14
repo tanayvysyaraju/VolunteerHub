@@ -154,20 +154,6 @@ export default function Landing() {
               Join a community of volunteers making a difference. 
               Discover opportunities that matter to you and create lasting change.
             </p>
-            <div className="hero-stats">
-              <div className="stat">
-                <div className="stat-number">500+</div>
-                <div className="stat-label">Active Volunteers</div>
-              </div>
-              <div className="stat">
-                <div className="stat-number">1,200+</div>
-                <div className="stat-label">Hours Contributed</div>
-              </div>
-              <div className="stat">
-                <div className="stat-number">50+</div>
-                <div className="stat-label">Communities Served</div>
-              </div>
-            </div>
           </div>
           
           {/* Auth Form */}
