@@ -3,11 +3,11 @@ import os
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from postgres_database import db
+from slack_bot.postgres_database import db
 import json
-from Scraper import scrape_and_group_messages
-from user_mapping import get_user_name
-from llm_analyzer import analyze_user_messages
+from slack_bot.Scraper import scrape_and_group_messages
+from slack_bot.user_mapping import get_user_name
+from slack_bot.llm_analyzer import analyze_user_messages
 
 # Load environment variables from .env file
 load_dotenv()
