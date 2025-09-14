@@ -67,6 +67,14 @@ export default function Home({ user }) {
         <div className="header-content">
           <h1>Welcome back, {user?.full_name || "Volunteer"}!</h1>
           <p>Ready to make a difference in your community?</p>
+          <div className="header-actions">
+            <a href="/analytics" className="analytics-link">
+              📊 View Company Analytics
+            </a>
+            <a href="/create-event" className="create-event-link">
+              ➕ Create Event
+            </a>
+          </div>
         </div>
       </header>
 

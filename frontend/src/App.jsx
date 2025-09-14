@@ -4,6 +4,8 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-route
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
+import CompanyAnalytics from "./pages/CompanyAnalytics";
+import CreateEvent from "./pages/CreateEvent";
 import Events from "./pages/Events";
 
 const API_URL = "http://localhost:8080";
@@ -34,6 +36,22 @@ export default function App() {
           element={
             <RequireAuth>
               <Home user={user} />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/analytics"
+          element={
+            <RequireAuth>
+              <CompanyAnalytics user={user} />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/create-event"
+          element={
+            <RequireAuth>
+              <CreateEvent user={user} />
             </RequireAuth>
           }
         />
